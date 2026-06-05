@@ -66,6 +66,10 @@ impl Tool for WebSearch {
         "web_search"
     }
 
+    fn description(&self) -> &str {
+        "Search the web (Tavily) and return a short summary with sources. `input` is the search query."
+    }
+
     async fn invoke(&self, query: &str) -> Result<ToolResult, TamError> {
         let body = json!({
             "api_key": self.api_key,

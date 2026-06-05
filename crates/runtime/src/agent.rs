@@ -19,7 +19,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use thaliox_cognition::{Completion, LlmProvider, Message};
+use serde_json::json;
+use thaliox_cognition::{Completion, LlmProvider, Message, ToolSpec};
 use thaliox_core::{
     AgentId, AttentionBudget, AuditRecord, CapabilityToken, CapabilityVerifier, Operation,
     ResourceKind, SemanticObject, SemanticSpace, TamError, Tool,
@@ -228,12 +229,14 @@ impl Agent {
 
         // Act on state; capture the *actual* cost for reconciliation.
         let acted: Result<(Outcome, u64), TamError> = match action {
-            Action::Think { prompt, .. } => {
-                self.mind.complete(&[Message::user(prompt)]).await.map(|c| {
+            Action::Think { prompt, .. } => self
+                .mind
+                .complete(&[Message::user(prompt)], &[])
+                .await
+                .map(|c| {
                     let actual = c.tokens;
                     (Outcome::Thought(c), actual)
-                })
-            }
+                }),
             Action::Remember { object, .. } => {
                 let id = object.id.clone();
                 self.memory
@@ -270,6 +273,94 @@ impl Agent {
         }
     }
 
+    /// **Autonomous loop** — give the agent a goal and let cognition decide which
+    /// tools to call. Each think step is budget-gated (INV-1); each tool call
+    /// goes through the full `act` gate (INV-1/2/4). The agent's registered tools
+    /// are advertised automatically; the loop ends when the model answers in
+    /// text or `max_iters` is reached.
+    pub async fn run(
+        &mut self,
+        goal: impl Into<String>,
+        max_iters: u32,
+    ) -> Result<String, TamError> {
+        if self.phase != Phase::Live {
+            return Err(TamError::Invalid(format!("agent {} is not live", self.id)));
+        }
+        let specs = self.tool_specs();
+        let mut convo = vec![Message::user(goal)];
+
+        for _ in 0..max_iters {
+            let completion = self.think_with_tools(&convo, &specs).await?;
+            if completion.tool_calls.is_empty() {
+                return Ok(completion.content); // final text answer
+            }
+            // Replay the assistant turn (with its tool_use), then run each call.
+            convo.push(Message::assistant_with_tools(
+                completion.content.clone(),
+                completion.tool_calls.clone(),
+            ));
+            for tc in &completion.tool_calls {
+                let result = match self
+                    .act(Action::Invoke {
+                        tool: tc.name.clone(),
+                        input: tool_input(&tc.arguments),
+                        cost: 200,
+                    })
+                    .await
+                {
+                    Ok(Outcome::Invoked(out)) => out,
+                    Ok(_) => "(unexpected outcome)".to_string(),
+                    // Feed the error back so the model can self-correct.
+                    Err(e) => format!("error: {e}"),
+                };
+                convo.push(Message::tool_result(tc.id.clone(), result));
+            }
+        }
+        Ok("[reached max iterations without a final answer]".to_string())
+    }
+
+    /// A budget-gated cognition step advertising `specs`. Like `Think`, it is not
+    /// capability-gated (introspection), but it reconciles the real token cost
+    /// and is audited (INV-1 / INV-4).
+    async fn think_with_tools(
+        &mut self,
+        convo: &[Message],
+        specs: &[ToolSpec],
+    ) -> Result<Completion, TamError> {
+        const RESERVE: u64 = 500;
+        let now = now_millis();
+        self.budget.charge(RESERVE)?;
+        match self.mind.complete(convo, specs).await {
+            Ok(c) => {
+                self.budget.settle(RESERVE, c.tokens);
+                self.record(Operation::Think, None, c.tokens, "self", now, true);
+                Ok(c)
+            }
+            Err(e) => {
+                self.budget.settle(RESERVE, 0);
+                self.record(Operation::Think, None, 0, "self", now, false);
+                Err(e)
+            }
+        }
+    }
+
+    /// Advertise the agent's registered tools to the model (a unified single
+    /// `input` string parameter per tool).
+    fn tool_specs(&self) -> Vec<ToolSpec> {
+        self.tools
+            .values()
+            .map(|t| ToolSpec {
+                name: t.name().to_string(),
+                description: t.description().to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": { "input": { "type": "string", "description": "the tool input" } },
+                    "required": ["input"]
+                }),
+            })
+            .collect()
+    }
+
     fn record(
         &mut self,
         op: Operation,
@@ -296,6 +387,23 @@ fn now_millis() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Extract a tool's single `input` argument from the model's JSON arguments,
+/// falling back to the first string value, then the raw arguments.
+fn tool_input(arguments: &str) -> String {
+    let v: serde_json::Value = serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
+    if let Some(s) = v.get("input").and_then(|x| x.as_str()) {
+        return s.to_string();
+    }
+    if let Some(obj) = v.as_object() {
+        for val in obj.values() {
+            if let Some(s) = val.as_str() {
+                return s.to_string();
+            }
+        }
+    }
+    arguments.to_string()
 }
 
 #[cfg(test)]
@@ -480,7 +588,7 @@ mod tests {
         fn is_local(&self) -> bool {
             true
         }
-        async fn complete(&self, _: &[Message]) -> Result<Completion, TamError> {
+        async fn complete(&self, _: &[Message], _: &[ToolSpec]) -> Result<Completion, TamError> {
             Err(TamError::Provider("boom".into()))
         }
     }
@@ -638,6 +746,41 @@ mod tests {
             })
             .await
             .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn run_loops_tool_call_then_answers() {
+        use thaliox_cognition::{Completion, ToolCall};
+        // Scripted model: first ask to call `echo`, then answer in text.
+        let mind = MockProvider::scripted(vec![
+            Completion::calls(
+                20,
+                vec![ToolCall {
+                    id: "c1".into(),
+                    name: "echo".into(),
+                    arguments: r#"{"input":"hi"}"#.into(),
+                }],
+            ),
+            Completion::text("最终答案", 10),
+        ]);
+        let mut a = Agent::new(
+            AgentId::new("a1"),
+            AttentionBudget::new(10_000, 100_000),
+            Arc::new(InMemorySpace::new()),
+            Arc::new(mind),
+        )
+        .with_tool(Arc::new(EchoTool))
+        .grant(tool_cap());
+        a.start().unwrap();
+
+        let answer = a.run("use the echo tool", 5).await.unwrap();
+        assert_eq!(answer, "最终答案");
+        // Audit: think → tool invoke → think.
+        let ops: Vec<Operation> = a.audit().iter().map(|r| r.op).collect();
+        assert_eq!(
+            ops,
+            vec![Operation::Think, Operation::ToolInvoke, Operation::Think]
         );
     }
 }

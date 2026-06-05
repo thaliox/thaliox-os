@@ -31,6 +31,10 @@ impl Tool for Fetch {
         "fetch"
     }
 
+    fn description(&self) -> &str {
+        "HTTP GET a URL and return its page body (truncated). `input` is the URL."
+    }
+
     async fn invoke(&self, url: &str) -> Result<ToolResult, TamError> {
         let resp = self
             .client
