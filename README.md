@@ -1,83 +1,94 @@
-# THALIOX — 为 AI、由 AI 打造的操作系统
+# THALIOX — an operating system for AI, by AI
 
-> **"让 AI 重新定义 AI" — An Operating System for AI, by AI, ultimately for Humans.**
+> **"Let AI redefine AI" — An operating system for AI, by AI, ultimately for Humans.**
 
-THALIOX 不是 "Linux + Agent" 的缝合体,而是**自上而下、为 AI Agent 原生设计**的操作系统:
-向量取代文件、Token 流取代字节管道、注意力预算取代 CPU 时间片、能力令牌取代 uid/gid。
+THALIOX is not "Linux + agents" stitched together. It is an operating system **designed top-down,
+natively for AI agents**: vectors replace files, token streams replace byte pipes, attention budgets
+replace CPU time slices, capability tokens replace uid/gid.
 
-本仓库是从 0 重构的 **THALIOX 本体**,以 **TAM 抽象机契约**([RFC-0001](docs/rfcs/0001-abstract-machine.md))
-为脊椎——确保软件实现(H1,先跑在 Linux 上验证)与未来自研硅(H3)遵守**同一份语义**,
-中间的演进是"替换实现",而非"推倒重来"。
+This repository is the **THALIOX core, rebuilt from scratch**, with the **TAM Abstract Machine contract**
+([RFC-0001](docs/rfcs/0001-abstract-machine.md)) as its spine — so the software implementation (H1, validated
+first on Linux) and future custom silicon (H3) obey **one shared semantics**. The evolution in between is
+"swap the implementation," not "tear it down and start over."
 
-## 三条不可动摇的原则
+## Three immovable principles
 
-1. **自上而下 (Top-Down)** — 先定义应用层 agent 如何工作、解决什么问题,再让运行时/内核/硬件逐层向下为它服务。硬件是 agent 世界的仆人,不是起点的枷锁。
-2. **分步登月 (Staged Moonshot)** — 每个里程碑都独立有价值、可演示、可融资、可证伪下一阶段。
-3. **人类是底线 (Human as the Floor)** — 可审计、可一键接管、可回滚,不可绕过(INV-5 Sovereign 能力)。
-4. **清白起步 (Clean-Slate Mandate)** — 不被 x86 / 现有 CPU·GPU / Linux 内核等人类遗产框死;**目的是让 AI OS 运行效率更高、全力为 AI 服务**,而非为推翻而推翻。
+1. **Top-Down** — first define how application-layer agents work and what problems they solve, then make the runtime / kernel / hardware serve them, layer by layer. Hardware is the servant of the agent world, not a starting cage.
+2. **Staged Moonshot** — every milestone is independently valuable, demonstrable, fundable, and falsifies the next stage.
+3. **Humans are the Floor** — auditable, one-key takeover, reversible; never bypassable (INV-5 Sovereign capability).
+4. **Clean-Slate Mandate** — not framed by human legacy (x86 / current CPUs·GPUs / the Linux kernel). **The purpose is efficiency** — to make the AI OS run faster and serve AI fully, not change for change's sake.
 
-## TAM:三原语 · 五不变量
+## TAM: three primitives · five invariants
 
-三个第一性原语(详见 [RFC-0001](docs/rfcs/0001-abstract-machine.md)):
+Three first-principles primitives (see [RFC-0001](docs/rfcs/0001-abstract-machine.md)):
 
-- **向量消息 (Vector Message)** — agent 间交换"意义"的单位,而非字节流。
-- **注意力预算 (Attention Budget)** — 调度与资源核算的单位(token),取代 CPU 时间片。
-- **能力令牌 (Capability Token)** — 权限与信任的单位,取代 uid/gid。
+- **Vector Message** — the unit agents use to exchange *meaning*, not byte streams.
+- **Attention Budget** — the unit of scheduling and accounting (tokens), replacing the CPU time slice.
+- **Capability Token** — the unit of permission and trust, replacing uid/gid.
 
-五条不变量约束任何实现:**INV-1 预算守恒 · INV-2 能力前置(scope 必须强制)· INV-3 向量保真 · INV-4 可审计 · INV-5 人类底线**。
+Five invariants constrain any implementation: **INV-1 budget conservation · INV-2 capability first (scope must be enforced) · INV-3 vector fidelity · INV-4 auditable · INV-5 humans are the floor**.
 
-## 工作区
+## Workspace
 
-| crate | 层 | 职责 |
+| crate | layer | responsibility |
 |---|---|---|
-| `thaliox-core` | — | TAM 原语 + 五不变量 + SemanticCall + SemanticSpace / Tool 契约 |
-| `thaliox-runtime` | L2 | agent 执行单元、生命周期、注意力调度、**自主 tool-calling 循环**、审计 |
-| `thaliox-memory` | L1 | SemanticSpace + 四层记忆(working/episodic/semantic/procedural) |
-| `thaliox-cognition` | L1 | 统一 LLM 接口(Anthropic / OpenAI-兼容 / 本地 mock)+ tool-calling 渲染解析 |
-| `thaliox-tools` | L4 | agent 可调的工具(`web_search` / `fetch`),受能力门控 |
-| `thaliox-fabric` | L3 | agent↔agent 向量传输、团队编排、CRDT 状态复制(M4 起填充) |
-| `thaliox-cap` | — | 能力令牌签发/验证(规范化**长度前缀**签名、scope 强制) |
-| `thaliox-api` | L5 | 统一 API 网关(axum)+ 多语言 SDK 入口 |
+| `thaliox-core` | — | TAM primitives + five invariants + SemanticCall + SemanticSpace / Tool contracts |
+| `thaliox-runtime` | L2 | agent execution unit, lifecycle, attention scheduling, **autonomous tool-calling loop**, audit |
+| `thaliox-memory` | L1 | SemanticSpace + four-layer memory (working/episodic/semantic/procedural) |
+| `thaliox-cognition` | L1 | unified LLM interface (Anthropic / OpenAI-compatible / local mock) + tool-calling render & parse |
+| `thaliox-tools` | L4 | agent-callable tools (`web_search` / `fetch`), capability-gated |
+| `thaliox-fabric` | L3 | agent↔agent vector transport, team orchestration, CRDT state replication (from M4) |
+| `thaliox-cap` | — | capability token issuing / verification (canonical **length-prefixed** signature, scope enforcement) |
+| `thaliox-api` | L5 | unified API gateway (axum) + multi-language SDK entry |
 
-## 状态:✅ M1 单机 MVP 完成 (2026-06-05, `v0.1.0`)
+## Status: ✅ M1 single-node MVP shipped (2026-06-05, `v0.1.0`)
 
-M1 验证了**编程模型成立**:一个单机 agent,在 TAM 五不变量约束下,能自主完成任务。
-详见 [docs/M1-MILESTONE.md](docs/M1-MILESTONE.md)。已交付:
+M1 proves the **programming model holds**: a single-node agent that, under the five TAM invariants,
+completes a task autonomously. See [docs/M1-MILESTONE.md](docs/M1-MILESTONE.md). Delivered:
 
-- **认知** — 统一 `LlmProvider`,接 Anthropic Messages / OpenAI Chat Completions(及任意兼容网关),离线 mock 退化。
-- **记忆** — `SemanticSpace` 向量记忆(remember / recall)。
-- **工具 + 自主闭环** — `Agent::run(goal)`:**模型自己决定调哪个工具**(`web_search` / `fetch`)、执行、把结果喂回、再思考,直到给出答案。
-- **注意力预算** — 预留→真实 token 对账(INV-1 守恒),失败退款。
-- **能力门控** — 每次 act 校验签名 + 过期 + scope(INV-2 前置),全程审计(INV-4)。
-- **API 网关** — axum HTTP:`/agents` 生命周期 + think / remember / recall / invoke + 审计查询。
+- **Cognition** — a unified `LlmProvider` wired to Anthropic Messages / OpenAI Chat Completions (and any compatible gateway), with an offline mock fallback.
+- **Memory** — `SemanticSpace` vector memory (remember / recall).
+- **Tools + autonomous loop** — `Agent::run(goal)`: **the model decides which tool to call** (`web_search` / `fetch`), executes it, feeds the result back, and keeps thinking until it answers.
+- **Attention budget** — reservation → real-token reconciliation (INV-1 conservation), refunds on failure.
+- **Capability gating** — every act verifies signature + expiry + scope (INV-2 first), fully audited (INV-4).
+- **API gateway** — axum HTTP: `/agents` lifecycle + think / remember / recall / invoke + audit queries.
 
-**实测(glm-5.1 + Tavily)**:给定目标,模型自主调 `web_search` → 真实搜索 → 一句话总结;
-审计轨迹 `Think → ToolInvoke → Think`,预算逐笔对账。
+**Verified (glm-5.1 + Tavily)**: given a goal, the model autonomously calls `web_search` → real search → one-line summary;
+audit trail `Think → ToolInvoke → Think`, budget reconciled line by line.
 
-四门全绿:`fmt` · `clippy -D warnings` · `test`(30) · `doc -D warnings`。
+All four gates green: `fmt` · `clippy -D warnings` · `test` (30) · `doc -D warnings`.
 
-### 快速上手
+### Quickstart
 
 ```bash
-# 自主 agent:真模型自主调工具(无 key 则脚本化 mock 演示同一闭环)
+# autonomous agent: a real model decides which tool to call
+# (falls back to a scripted mock with no key)
 OPENAI_API_KEY=...  OPENAI_BASE_URL=...  THALIOX_MODEL=glm-5.1 \
   TAVILY_API_KEY=...  cargo run -p thaliox-runtime --example autonomous_agent
 
-# 其它示例
-cargo run -p thaliox-runtime --example single_node    # 纯离线最小回路
-cargo run -p thaliox-runtime --example secure_agent   # 能力签名门控
-cargo run -p thaliox-api      --example gateway        # HTTP 网关 :8088
+# other examples
+cargo run -p thaliox-runtime --example single_node    # minimal offline loop
+cargo run -p thaliox-runtime --example secure_agent   # capability-signature gating
+cargo run -p thaliox-api      --example gateway        # HTTP gateway on :8088
 ```
 
-## 路线
+## Roadmap
 
-H1 软件(跑在 Linux)→ H2 专门化(向下压栈)→ H3 协同设计的硅。下一站 **M2 microVM 化**
-(一键部署 + 快照/恢复 + 自更新回滚)。完整路线见 [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md)。
+H1 software (on Linux) → H2 specialization (push down the stack) → H3 co-designed silicon. Next up is
+**M2 microVM packaging** (one-command deploy + snapshot/restore + self-update rollback). Full roadmap in
+[docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
 
-## 与早期仓库的关系
+## Contributing
 
-`github.com/thaliox/thaliox` 是早期在 Linux 上的原型/参考实现(已归档)。
-本仓库 `thaliox-os` 是按 MASTER_PLAN + TAM **从 0 重构的主线**,不继承现有硬件/内核假设。
+We welcome contributors. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to submit a PR and how to apply
+for developer access. Development progress lives at [thaliox.dev](https://thaliox.dev); docs at
+[thaliox.io](https://thaliox.io).
+
+## Relationship to the earlier repo
+
+`github.com/thaliox/thaliox` was an early prototype / reference on Linux (now archived).
+This `thaliox-os` repo is the **from-scratch rebuild** per the Master Plan + TAM, inheriting no existing
+hardware / kernel assumptions.
 
 ## License
 
