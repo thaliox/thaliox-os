@@ -36,11 +36,15 @@ fn cap(subject: &str, perm: Permission, pattern: &str) -> CapabilityToken {
 /// Pick a provider from whichever API key is present; else an offline mock.
 fn pick_provider() -> (Arc<dyn LlmProvider>, String, bool) {
     let model_env = std::env::var("THALIOX_MODEL").ok();
+    let max_tokens: u32 = std::env::var("THALIOX_MAX_TOKENS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1024);
     if std::env::var("ANTHROPIC_API_KEY").is_ok() {
         let model = model_env.unwrap_or_else(|| "claude-sonnet-4-6".into());
         let mut p = AnthropicProvider::from_env(model.as_str())
             .unwrap()
-            .with_max_tokens(512);
+            .with_max_tokens(max_tokens);
         if let Ok(url) = std::env::var("ANTHROPIC_BASE_URL") {
             p = p.with_base_url(url);
         }
@@ -49,7 +53,7 @@ fn pick_provider() -> (Arc<dyn LlmProvider>, String, bool) {
         let model = model_env.unwrap_or_else(|| "gpt-4o".into());
         let mut p = OpenAiProvider::from_env(model.as_str())
             .unwrap()
-            .with_max_tokens(512);
+            .with_max_tokens(max_tokens);
         if let Ok(url) = std::env::var("OPENAI_BASE_URL") {
             p = p.with_base_url(url);
         }
