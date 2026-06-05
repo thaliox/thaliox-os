@@ -887,6 +887,7 @@ dependencies = [
 name = "thaliox-core"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "serde",
  "thiserror",
 ]
@@ -916,7 +917,18 @@ dependencies = [
  "thaliox-cognition",
  "thaliox-core",
  "thaliox-memory",
+ "thaliox-tools",
  "tokio",
+]
+
+[[package]]
+name = "thaliox-tools"
+version = "0.0.0"
+dependencies = [
+ "async-trait",
+ "reqwest",
+ "serde_json",
+ "thaliox-core",
 ]
 
 [[package]]

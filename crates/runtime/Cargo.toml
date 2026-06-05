@@ -14,5 +14,6 @@ serde.workspace = true
 
 [dev-dependencies]
 thaliox-memory.workspace = true
+thaliox-tools.workspace = true
 tokio.workspace = true
 async-trait.workspace = true

@@ -63,6 +63,11 @@ async fn step(agent: &mut Agent, label: &str, action: Action) {
                 agent.remaining_budget()
             );
         }
+        Ok(Outcome::Invoked(out)) => println!(
+            "· {label:<28} → 工具输出: {}  余 {}",
+            out.chars().take(50).collect::<String>(),
+            agent.remaining_budget()
+        ),
         Err(e) => println!("· {label:<28} ✗ 拒绝: {e}  余 {}", agent.remaining_budget()),
     }
 }

@@ -13,13 +13,14 @@
 //! verification (via `thaliox-cap`) and expiry are assumed done at grant time;
 //! wiring them into `act` is the next step.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use thaliox_cognition::{Completion, LlmProvider, Message};
 use thaliox_core::{
     AgentId, AttentionBudget, AuditRecord, CapabilityToken, Operation, ResourceKind,
-    SemanticObject, SemanticSpace, TamError,
+    SemanticObject, SemanticSpace, TamError, Tool,
 };
 
 use crate::Phase;
@@ -40,6 +41,13 @@ pub enum Action {
         k: usize,
         cost: u64,
     },
+    /// Invoke a tool (web_search / fetch / …) by name. Needs `Execute` over
+    /// `tool://<name>`.
+    Invoke {
+        tool: String,
+        input: String,
+        cost: u64,
+    },
 }
 
 impl Action {
@@ -48,6 +56,7 @@ impl Action {
             Action::Think { .. } => Operation::Think,
             Action::Remember { .. } => Operation::MemWrite,
             Action::Recall { .. } => Operation::MemSearch,
+            Action::Invoke { .. } => Operation::ToolInvoke,
         }
     }
 
@@ -55,7 +64,16 @@ impl Action {
         match self {
             Action::Think { cost, .. }
             | Action::Remember { cost, .. }
-            | Action::Recall { cost, .. } => *cost,
+            | Action::Recall { cost, .. }
+            | Action::Invoke { cost, .. } => *cost,
+        }
+    }
+
+    /// The resource kind an action acts on (for INV-2 scope matching).
+    fn resource(&self) -> ResourceKind {
+        match self {
+            Action::Invoke { .. } => ResourceKind::Tool,
+            _ => ResourceKind::Memory,
         }
     }
 }
@@ -69,6 +87,8 @@ pub enum Outcome {
     Remembered(String),
     /// Objects recalled by semantic similarity.
     Recalled(Vec<SemanticObject>),
+    /// A tool's textual output.
+    Invoked(String),
 }
 
 /// A live agent: identity + attention budget + capabilities + a memory view +
@@ -79,6 +99,7 @@ pub struct Agent {
     caps: Vec<CapabilityToken>,
     memory: Arc<dyn SemanticSpace>,
     mind: Arc<dyn LlmProvider>,
+    tools: HashMap<String, Arc<dyn Tool>>,
     phase: Phase,
     audit: Vec<AuditRecord>,
 }
@@ -97,6 +118,7 @@ impl Agent {
             caps: Vec::new(),
             memory,
             mind,
+            tools: HashMap::new(),
             phase: Phase::Born,
             audit: Vec::new(),
         }
@@ -105,6 +127,12 @@ impl Agent {
     /// Grant a capability to the agent (builder-style).
     pub fn grant(mut self, cap: CapabilityToken) -> Self {
         self.caps.push(cap);
+        self
+    }
+
+    /// Register a tool the agent may invoke (keyed by [`Tool::name`]).
+    pub fn with_tool(mut self, tool: Arc<dyn Tool>) -> Self {
+        self.tools.insert(tool.name().to_string(), tool);
         self
     }
 
@@ -140,12 +168,14 @@ impl Agent {
         &self.audit
     }
 
-    /// The memory address a `Remember`/`Recall` acts on, in the agent's namespace.
+    /// The resource target an action acts on (for scope matching), in the
+    /// agent's namespace.
     fn target_of(&self, action: &Action) -> String {
         match action {
             Action::Think { .. } => "self".to_string(),
             Action::Remember { object, .. } => format!("mem://{}/{}", self.id, object.id),
             Action::Recall { .. } => format!("mem://{}/", self.id),
+            Action::Invoke { tool, .. } => format!("tool://{tool}"),
         }
     }
 
@@ -161,15 +191,13 @@ impl Agent {
         let op = action.operation();
         let cost = action.declared_cost();
         let perm = op.required_permission();
+        let resource = action.resource();
         let target = self.target_of(&action);
         let now = now_millis();
 
         // INV-2: capability — permission AND scope (skipped for budget-only ops).
         if let Some(p) = perm {
-            let authorized = self
-                .caps
-                .iter()
-                .any(|c| c.authorizes(p, ResourceKind::Memory, &target));
+            let authorized = self.caps.iter().any(|c| c.authorizes(p, resource, &target));
             if !authorized {
                 self.record(op, perm, 0, &target, now, false);
                 return Err(TamError::CapabilityDenied(format!("{p:?} on {target}")));
@@ -200,6 +228,13 @@ impl Agent {
                 .memory
                 .search(&query, k)
                 .map(|hits| (Outcome::Recalled(hits), cost)),
+            Action::Invoke { tool, input, .. } => match self.tools.get(&tool) {
+                Some(t) => t
+                    .invoke(&input)
+                    .await
+                    .map(|r| (Outcome::Invoked(r.output), r.cost)),
+                None => Err(TamError::NotFound(format!("tool '{tool}'"))),
+            },
         };
 
         match acted {
@@ -453,5 +488,93 @@ mod tests {
         assert!(matches!(err, TamError::Provider(_)));
         assert_eq!(a.remaining_budget(), 100); // reservation refunded
         assert!(!a.audit()[0].allowed);
+    }
+
+    use thaliox_core::ToolResult;
+
+    struct EchoTool;
+
+    #[async_trait::async_trait]
+    impl Tool for EchoTool {
+        fn name(&self) -> &str {
+            "echo"
+        }
+        async fn invoke(&self, input: &str) -> Result<ToolResult, TamError> {
+            Ok(ToolResult {
+                output: format!("echo:{input}"),
+                cost: 3,
+            })
+        }
+    }
+
+    fn tool_cap() -> CapabilityToken {
+        CapabilityToken {
+            subject: AgentId::new("a1"),
+            permissions: vec![Permission::Execute],
+            scope: vec![Scope {
+                resource: ResourceKind::Tool,
+                pattern: "tool://*".into(),
+            }],
+            issued_at: 0,
+            expires_at: 0,
+            jti: [0; 16],
+            delegable: false,
+            signature: [0; 32],
+        }
+    }
+
+    fn agent_with_tool() -> Agent {
+        Agent::new(
+            AgentId::new("a1"),
+            AttentionBudget::new(100, 1000),
+            Arc::new(InMemorySpace::new()),
+            Arc::new(MockProvider::new("ok", 5)),
+        )
+        .with_tool(Arc::new(EchoTool))
+    }
+
+    #[tokio::test]
+    async fn tool_invoke_needs_execute_in_scope() {
+        // No capability → denied.
+        let mut a = agent_with_tool();
+        a.start().unwrap();
+        let err = a
+            .act(Action::Invoke {
+                tool: "echo".into(),
+                input: "hi".into(),
+                cost: 2,
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TamError::CapabilityDenied(_)));
+
+        // Grant Execute over tool://* → it runs; cost reconciles to the tool's 3.
+        let mut a = agent_with_tool().grant(tool_cap());
+        a.start().unwrap();
+        let out = a
+            .act(Action::Invoke {
+                tool: "echo".into(),
+                input: "hi".into(),
+                cost: 2,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(out, Outcome::Invoked(s) if s == "echo:hi"));
+        assert_eq!(a.remaining_budget(), 97); // reserved 2 → settled 3
+    }
+
+    #[tokio::test]
+    async fn unknown_tool_is_not_found() {
+        let mut a = agent_with_tool().grant(tool_cap());
+        a.start().unwrap();
+        let err = a
+            .act(Action::Invoke {
+                tool: "nope".into(),
+                input: String::new(),
+                cost: 1,
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TamError::NotFound(_)));
     }
 }
