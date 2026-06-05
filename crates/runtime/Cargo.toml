@@ -15,3 +15,4 @@ serde.workspace = true
 [dev-dependencies]
 thaliox-memory.workspace = true
 tokio.workspace = true
+async-trait.workspace = true

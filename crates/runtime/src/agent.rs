@@ -3,8 +3,9 @@
 //!
 //! 1. **INV-2** — capability check (permission **and** scope), skipped only for
 //!    budget-only [`Think`](thaliox_core::Operation::Think);
-//! 2. **INV-1** — charge the declared cost against the attention budget *before*
-//!    executing;
+//! 2. **INV-1** — reserve the declared cost *before* executing, then **reconcile
+//!    to the actual cost** afterwards (a `Think`'s real token usage; a failed
+//!    call refunds the reservation);
 //! 3. act on state (cognition / memory);
 //! 4. **INV-4** — emit an [`AuditRecord`].
 //!
@@ -181,23 +182,41 @@ impl Agent {
             return Err(e);
         }
 
-        // Act on state.
-        let outcome = match action {
+        // Act on state; capture the *actual* cost for reconciliation.
+        let acted: Result<(Outcome, u64), TamError> = match action {
             Action::Think { prompt, .. } => {
-                let completion = self.mind.complete(&[Message::user(prompt)]).await?;
-                Outcome::Thought(completion)
+                self.mind.complete(&[Message::user(prompt)]).await.map(|c| {
+                    let actual = c.tokens;
+                    (Outcome::Thought(c), actual)
+                })
             }
             Action::Remember { object, .. } => {
                 let id = object.id.clone();
-                self.memory.put(object)?;
-                Outcome::Remembered(id)
+                self.memory
+                    .put(object)
+                    .map(|()| (Outcome::Remembered(id), cost))
             }
-            Action::Recall { query, k, .. } => Outcome::Recalled(self.memory.search(&query, k)?),
+            Action::Recall { query, k, .. } => self
+                .memory
+                .search(&query, k)
+                .map(|hits| (Outcome::Recalled(hits), cost)),
         };
 
-        // INV-4: audit the successful call.
-        self.record(op, perm, cost, &target, now, true);
-        Ok(outcome)
+        match acted {
+            Ok((outcome, actual)) => {
+                // INV-1 reconciliation: settle the reservation to the real cost.
+                self.budget.settle(cost, actual);
+                // INV-4: audit records the *actual* cost.
+                self.record(op, perm, actual, &target, now, true);
+                Ok(outcome)
+            }
+            Err(e) => {
+                // Execution failed → refund the reservation; audit the failure.
+                self.budget.settle(cost, 0);
+                self.record(op, perm, 0, &target, now, false);
+                Err(e)
+            }
+        }
     }
 
     fn record(
@@ -373,5 +392,66 @@ mod tests {
             .await
             .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn think_reconciles_to_actual_token_cost() {
+        // The mock really spends 20 tokens though the action declared only 5;
+        // after reconciliation the budget and the audit reflect the real 20.
+        let mut a = Agent::new(
+            AgentId::new("a1"),
+            AttentionBudget::new(100, 1000),
+            Arc::new(InMemorySpace::new()),
+            Arc::new(MockProvider::new("done", 20)),
+        );
+        a.start().unwrap();
+        let out = a
+            .act(Action::Think {
+                prompt: "x".into(),
+                cost: 5,
+            })
+            .await
+            .unwrap();
+        assert!(matches!(out, Outcome::Thought(_)));
+        assert_eq!(a.remaining_budget(), 80); // reserved 5 → settled to 20
+        assert_eq!(a.audit()[0].cost, 20); // audit records the real cost
+    }
+
+    /// A provider that always fails — to test that a failed call refunds its
+    /// reservation.
+    struct FailProvider;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for FailProvider {
+        fn id(&self) -> &str {
+            "fail"
+        }
+        fn is_local(&self) -> bool {
+            true
+        }
+        async fn complete(&self, _: &[Message]) -> Result<Completion, TamError> {
+            Err(TamError::Provider("boom".into()))
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_think_refunds_reservation() {
+        let mut a = Agent::new(
+            AgentId::new("a1"),
+            AttentionBudget::new(100, 1000),
+            Arc::new(InMemorySpace::new()),
+            Arc::new(FailProvider),
+        );
+        a.start().unwrap();
+        let err = a
+            .act(Action::Think {
+                prompt: "x".into(),
+                cost: 5,
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TamError::Provider(_)));
+        assert_eq!(a.remaining_budget(), 100); // reservation refunded
+        assert!(!a.audit()[0].allowed);
     }
 }
