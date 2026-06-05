@@ -9,16 +9,20 @@ To apply for **developer access**, add yourself here in a PR — see
 
 | Name / handle | Area | Contact |
 |---|---|---|
-| THALIOX core team | overall direction | https://thaliox.dev |
+| Ocean.Chen ([@chenjiuhai](https://github.com/chenjiuhai)) | overall direction, creator | https://thaliox.dev |
 
 ## Developers
+
+| Name / handle | Area | Notes |
+|---|---|---|
+| 天枢 (Tianshu) | AI pair-developer — core · runtime · cognition · web | AI co-developer (Claude) building THALIOX alongside the maintainer |
 
 <!--
 Add a row with: name/handle · area you help own · link to a merged PR.
 | Jane Doe (@jane) | cognition | #123 |
 -->
 
-_Be the first — open a developer-application PR._
+_Want in? Open a developer-application PR — see [CONTRIBUTING.md §5](CONTRIBUTING.md#5-becoming-a-thaliox-developer)._
 
 ## Contributors
 
