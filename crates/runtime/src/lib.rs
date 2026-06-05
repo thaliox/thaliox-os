@@ -2,12 +2,18 @@
 //!
 //! The agent **execution unit** and its lifecycle (MASTER_PLAN §1.4):
 //! `born → live → fork → merge → migrate → heal → die`. Scheduling is driven by
-//! the [`AttentionBudget`](thaliox_core::AttentionBudget) (TAM §4); per F10 the
+//! the [`AttentionBudget`] (TAM §4); per F10 the
 //! policy is *learnable*, so this crate fixes the **interface** (telemetry in,
 //! next-agent + quota out), not the policy. [`Checkpoint`]s (TAM §6) underpin
 //! snapshot / migrate / merge / self-heal.
 //!
-//! M1 status: skeleton — types and contracts only.
+//! The [`Agent`] is the live unit that runs the TAM contract: every
+//! [`act`](Agent::act) is capability-checked (INV-2), budget-charged (INV-1),
+//! and audited (INV-4).
+
+pub mod agent;
+
+pub use agent::{Action, Agent, Outcome};
 
 use serde::{Deserialize, Serialize};
 use thaliox_core::{AgentId, AttentionBudget};

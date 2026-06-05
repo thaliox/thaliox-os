@@ -9,4 +9,9 @@ description = "THALIOX runtime (L2) — agent execution unit, lifecycle, attenti
 
 [dependencies]
 thaliox-core.workspace = true
+thaliox-cognition.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+thaliox-memory.workspace = true
+tokio.workspace = true

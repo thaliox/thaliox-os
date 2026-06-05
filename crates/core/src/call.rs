@@ -1,15 +1,18 @@
-//! The **SemanticCall** — the TAM "instruction". Every operation is triple-gated
-//! (INV-1 charge budget · INV-2 capability check · act on state) and emits an
-//! audit record (INV-4). (TAM §2, §7)
+//! The **SemanticCall** — the TAM "instruction". Every operation is gated
+//! (INV-1 charge budget · INV-2 capability check where required · act on state)
+//! and emits an audit record (INV-4). (TAM §2, §7)
 
 use serde::{Deserialize, Serialize};
 
 use crate::agent::AgentId;
 use crate::capability::Permission;
 
-/// The minimal operation set (TAM §7). Each maps to a required [`Permission`].
+/// The operation set. `Think` (internal cognition) is budget-only; the rest are
+/// side-effecting and capability-gated (TAM §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Operation {
+    /// Internal cognition (inference). Costs budget, needs no capability.
+    Think,
     /// Send a vector message.
     VSend,
     /// Receive a vector message.
@@ -39,10 +42,12 @@ pub enum Operation {
 }
 
 impl Operation {
-    /// The permission this operation requires (TAM §7).
-    pub fn required_permission(self) -> Permission {
+    /// The permission this operation requires (TAM §7), or `None` if it is not
+    /// capability-gated (only `Think`, an agent's own introspection).
+    pub fn required_permission(self) -> Option<Permission> {
         use Operation::*;
-        match self {
+        Some(match self {
+            Think => return None,
             VSend | VRecv => Permission::Communicate,
             MemRead | MemSearch => Permission::Read,
             MemWrite | MemSummarize => Permission::Write,
@@ -52,7 +57,7 @@ impl Operation {
             // token; Admin is the class gate.
             CapDelegate | CapRevoke | Checkpoint | Restore => Permission::Admin,
             Sovereign => Permission::Sovereign,
-        }
+        })
     }
 }
 
@@ -64,8 +69,8 @@ pub struct AuditRecord {
     pub agent: AgentId,
     /// What operation.
     pub op: Operation,
-    /// Which permission authorized it.
-    pub permission_used: Permission,
+    /// Which permission authorized it (`None` for budget-only `Think`).
+    pub permission_used: Option<Permission>,
     /// How much attention budget it cost (tokens).
     pub cost: u64,
     /// What it acted on (resource target).
@@ -82,18 +87,22 @@ mod tests {
 
     #[test]
     fn operations_map_to_permissions() {
+        assert_eq!(Operation::Think.required_permission(), None);
         assert_eq!(
             Operation::VSend.required_permission(),
-            Permission::Communicate
+            Some(Permission::Communicate)
         );
-        assert_eq!(Operation::MemSearch.required_permission(), Permission::Read);
         assert_eq!(
-            Operation::AgentSpawn.required_permission(),
-            Permission::Spawn
+            Operation::MemSearch.required_permission(),
+            Some(Permission::Read)
+        );
+        assert_eq!(
+            Operation::MemWrite.required_permission(),
+            Some(Permission::Write)
         );
         assert_eq!(
             Operation::Sovereign.required_permission(),
-            Permission::Sovereign
+            Some(Permission::Sovereign)
         );
     }
 }
