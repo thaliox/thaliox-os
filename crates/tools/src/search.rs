@@ -34,7 +34,7 @@ impl WebSearch {
         if let Some(answer) = v.get("answer").and_then(|x| x.as_str())
             && !answer.is_empty()
         {
-            out.push_str("答案: ");
+            out.push_str("Answer: ");
             out.push_str(answer);
             out.push('\n');
         }
@@ -103,7 +103,7 @@ mod tests {
     #[test]
     fn summarize_answer_and_results() {
         let v = json!({
-            "answer": "Rust 是一门系统编程语言。",
+            "answer": "Rust is a systems programming language.",
             "results": [{
                 "title": "Rust",
                 "url": "https://rust-lang.org",
@@ -111,7 +111,7 @@ mod tests {
             }]
         });
         let r = WebSearch::summarize(&v);
-        assert!(r.output.contains("Rust 是一门系统编程语言"));
+        assert!(r.output.contains("Rust is a systems programming language"));
         assert!(r.output.contains("rust-lang.org"));
         assert!(r.cost >= 1);
     }

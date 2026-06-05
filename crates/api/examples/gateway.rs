@@ -1,13 +1,14 @@
-//! # gateway — 起 THALIOX 网关服务
+//! # gateway — start the THALIOX gateway service
 //!
-//! 起 axum HTTP 服务,用 curl(或任意客户端)驱动一个 agent。cognition 用本地
-//! mock(离线);把 MockProvider 换成 thaliox-cognition 的真实 provider 即接真模型。
+//! Starts an axum HTTP service and drives an agent with curl (or any client).
+//! Cognition uses a local mock (offline); swap MockProvider for a real
+//! thaliox-cognition provider to connect a real model.
 //!
 //! ```bash
 //! cargo run -p thaliox-api --example gateway
-//! # 另一个终端:
+//! # In another terminal:
 //! curl -s -XPOST localhost:8088/agents -d '{"id":"a1","budget":5000}'
-//! curl -s -XPOST localhost:8088/agents/a1/think    -d '{"prompt":"你好","cost":100}'
+//! curl -s -XPOST localhost:8088/agents/a1/think    -d '{"prompt":"hello","cost":100}'
 //! curl -s -XPOST localhost:8088/agents/a1/invoke   -d '{"tool":"fetch","input":"https://example.com","cost":100}'
 //! curl -s        localhost:8088/agents/a1/audit
 //! ```
@@ -24,16 +25,16 @@ async fn main() {
     let state = GatewayState::new(
         Arc::new(InMemorySpace::new()),
         Arc::new(MockProvider::new(
-            "THALIOX:为 AI、由 AI 打造的操作系统。",
+            "THALIOX: an operating system built for AI, by AI.",
             8,
         )),
         vec![Arc::new(Fetch::new())],
     );
 
-    println!("THALIOX gateway —— 单机 MVP 的 HTTP 入口");
-    println!("  POST /agents            spawn 一个 agent");
+    println!("THALIOX gateway —— HTTP entry point for the single-node MVP");
+    println!("  POST /agents            spawn an agent");
     println!("  POST /agents/{{id}}/think  remember / recall / invoke");
-    println!("  GET  /agents/{{id}}/audit  审计日志\n");
+    println!("  GET  /agents/{{id}}/audit  audit log\n");
 
     serve(state, "127.0.0.1:8088").await.unwrap();
 }

@@ -1,236 +1,236 @@
 # THALIOX — Master Plan
 
-> **"让 AI 重新定义 AI" — An Operating System for AI, by AI, ultimately for Humans.**
+> **"Let AI redefine AI" — An Operating System for AI, by AI, ultimately for Humans.**
 >
-> 文档版本: v1.0 · 状态: 总体蓝图 (Genesis)
+> Document version: v1.0 · Status: Overall blueprint (Genesis)
 
 ---
 
-## 0. 北极星 (North Star)
+## 0. North Star
 
-一句话命题(可被工程师执行、被投资人评估、被实验证伪):
+A one-sentence thesis (executable by engineers, assessable by investors, falsifiable by experiment):
 
-> **当机器为「模型的数据流」从硅到软件协同设计时,传统操作系统会溶解进编译器与学习型策略;于是「管理计算」这件事本身,可以交给 AI。THALIOX 就是承载这一过程的底座——一个让 AI 自治、协作、自我演化,而人类始终可审计、可接管的智能体操作系统。**
+> **When machines are co-designed from silicon to software for "the model's dataflow," the traditional operating system dissolves into the compiler and learned policies; and so "managing computation" itself can be handed to AI. THALIOX is the substrate that carries this process forward — an agent operating system in which AI is autonomous, collaborative, and self-evolving, while humans remain always able to audit and to take over.**
 
-四条不可动摇的原则:
+Four immovable principles:
 
-1. **自上而下 (Top-Down)**:先定义「应用层 agent 如何工作、解决什么问题」,再让运行时、内核、硬件逐层向下为它服务。硬件是 agent 世界的仆人,不是起点的枷锁。
-2. **分步登月 (Staged Moonshot)**:垂直整合是终点,水平验证是路径。每一阶段都必须**独立有价值、独立能融资、独立能证伪下一阶段**。绝不一次性赌上整个登月。
-3. **人类是底线 (Human as the Floor)**:系统最终服务于人类。可审计、可一键接管、可回滚,是最底层不可绕过的能力——这既是伦理底线,也是合规护城河。
-4. **清白起步 (Clean-Slate Mandate)**:现有的 x86/ARM、CPU/GPU、Linux 内核、PCIe/以太网、POSIX……都**只是 H1 阶段借用的临时脚手架,绝不写进 THALIOX 的定义**。凡现有事物不契合「AI 如何工作」的,一律可被推翻、重新研发、重新制造——芯片不限定于现有 CPU/GPU,内核不限定于 Linux,指令集/互连/存储皆可重造。THALIOX 由 **TAM 抽象机契约 + 「AI 如何工作」**定义,而非被任何现存硬件/内核/协议框定。这是「**AI 设计、AI 研发、AI 定义、AI 自用**」得以成立的前提:不让今天的遗产,框死明天的 AI OS。**而推翻遗产的唯一目的是「效率」,不是标新立异**:动态调度、文本协议、冯·诺依曼内存墙……这些为人类认知与通用计算而生的东西,对可预测的 AI 数据流是纯损耗。剥离它们,就是把每一份算力、带宽、能耗都还给 AI 工作负载本身,让 THALIOX **以最高效率全力为 AI 服务**。一切清白起步的决策,最终都要回答同一个问题:它是否让系统更高效地服务于 AI?
+1. **Top-Down**: First define "how application-layer agents work and what problems they solve," then have the runtime, kernel, and hardware serve them layer by layer, downward. Hardware is the servant of the agent world, not a shackle at the starting line.
+2. **Staged Moonshot**: Vertical integration is the endpoint; horizontal validation is the path. Every stage must be **independently valuable, independently fundable, and independently able to falsify the next stage**. Never bet the entire moonshot in one shot.
+3. **Humans are the Floor**: The system ultimately serves humans. Being auditable, one-click takeover-able, and rollback-able is the lowest-level, non-bypassable capability — both an ethical floor and a compliance moat.
+4. **Clean-Slate Mandate**: Today's x86/ARM, CPU/GPU, the Linux kernel, PCIe/Ethernet, POSIX... are **merely temporary scaffolding borrowed for the H1 stage, and are never written into THALIOX's definition**. Anything in existence that does not fit "how AI works" can be overturned, re-researched, and re-manufactured — chips are not confined to existing CPUs/GPUs, the kernel is not confined to Linux, and instruction sets / interconnects / storage can all be rebuilt. THALIOX is defined by the **TAM abstract-machine contract + "how AI works"**, not framed by any existing hardware/kernel/protocol. This is the precondition for "**AI designs, AI researches, AI defines, AI uses**" to hold: do not let today's legacy lock in tomorrow's AI OS. **And the sole purpose of overturning legacy is "efficiency," not novelty for its own sake**: dynamic scheduling, text protocols, the von Neumann memory wall... things born for human cognition and general-purpose computing are pure overhead for predictable AI dataflow. Stripping them away returns every unit of compute, bandwidth, and energy to the AI workload itself, letting THALIOX **serve AI at maximum efficiency with everything it has**. Every clean-slate decision must ultimately answer the same question: does it make the system serve AI more efficiently?
 
 ---
 
-## 1. 顶层:Agent 是什么、解决什么问题
+## 1. Top Layer: What an Agent Is and What Problems It Solves
 
-### 1.1 定义
+### 1.1 Definition
 
-> **Agent 不是一个应用程序,而是 THALIOX 里的一等公民——一个可被创建、调度、快照、迁移、合并、自愈、销毁的「数字生命单元」。** 它在系统中的地位等同于传统 OS 里的「进程」,但粒度是「一个完整的智能体」。
+> **An agent is not an application, but a first-class citizen of THALIOX — a "unit of digital life" that can be created, scheduled, snapshotted, migrated, merged, self-healed, and destroyed.** Its standing in the system is equivalent to a "process" in a traditional OS, but at the granularity of "a complete agent."
 
-### 1.2 它解决今天 agent 的六个根本缺陷
+### 1.2 The Six Fundamental Flaws of Today's Agents It Answers
 
-| 今天的痛点 | THALIOX 的回答 |
+| Today's pain point | THALIOX's answer |
 |---|---|
-| **失忆** — 会话结束即遗忘 | 终身记忆:上下文 + 向量库 + 概要 + 索引,跨会话持久 |
-| **孤立** — 无法真正协作 | 原生 agent↔agent 通信与团队编排 |
-| **脆弱** — 崩溃即死亡 | 多实例 + 快照 + 热迁移 + 自愈接管 |
-| **不可信** — 没有真正的权限边界 | 硬件级能力安全 (Capability),scope 强制 |
-| **离线即废** — 强依赖云端 | 内置/本地小参数模型,断网仍可推理 |
-| **不可治理** — 黑箱失控 | AI 监督 + 人类可一键接管/回滚/审计 |
+| **Amnesia** — forgets when the session ends | Lifelong memory: context + vector store + summaries + indexes, persisted across sessions |
+| **Isolation** — cannot truly collaborate | Native agent↔agent communication and team orchestration |
+| **Fragility** — a crash means death | Multiple instances + snapshots + live migration + self-healing takeover |
+| **Untrustworthy** — no real permission boundary | Hardware-level capability security, with scope enforcement |
+| **Useless offline** — hard dependence on the cloud | Built-in/local small-parameter models, inference even when disconnected |
+| **Ungovernable** — black-box and out of control | AI supervision + humans able to take over/roll back/audit with one click |
 
-### 1.3 Agent 的解剖 (内部器官)
+### 1.3 Anatomy of an Agent (Internal Organs)
 
 ```
                 ┌──────────────── Agent ────────────────┐
-                │  Identity        身份/角色/人格         │
+                │  Identity        identity/role/persona  │
                 │  ──────────────────────────────────── │
-                │  Cognition       LLM 接口(远程+本地)    │
-                │  Memory          上下文 + 向量长期记忆   │
-                │  Skills          能力集合               │
+                │  Cognition       LLM interface (remote+local) │
+                │  Memory          context + vector long-term memory │
+                │  Skills          capability set         │
                 │  Tools           web_search / fetch …  │
-                │  Plugins         抽象功能实现 (WASM)    │
-                │  Subagents       可自定义的子 agent     │
-                │  Capability      能力令牌(它能做什么)   │
+                │  Plugins         abstract feature impl (WASM) │
+                │  Subagents       customizable sub-agents │
+                │  Capability      capability token (what it can do) │
                 └────────────────────────────────────────┘
 ```
 
-- **Identity 身份**:唯一 ID、名称、角色、人格画像(随经历演化,非训练而成)。
-- **Cognition 认知**:`LlmProvider` trait 抽象多后端;离线时切到本地量化模型。
-- **Memory 记忆**:短期=上下文滑动窗口(对应 KV-Cache);长期=向量数据库保存 session 全量会话 + LLM 生成的**概要**与**索引**,语义检索召回。
-- **Skills / Tools / Plugins**:技能是能力集合;工具是外部动作(搜索/抓取);插件是可热插拔、沙箱化(WASM)、能力受限的功能实现。
-- **Subagents**:用户可自定义的子 agent——本质是「再 fork 一个 agent 单元」。
-- **Capability**:它被允许做什么、作用域多大——由硬件/运行时强制。
+- **Identity**: unique ID, name, role, persona profile (evolving with experience, not trained in).
+- **Cognition**: the `LlmProvider` trait abstracts multiple backends; switches to a local quantized model when offline.
+- **Memory**: short-term = the context sliding window (corresponding to the KV-Cache); long-term = a vector database holding the full session transcript plus LLM-generated **summaries** and **indexes**, recalled via semantic retrieval.
+- **Skills / Tools / Plugins**: skills are capability sets; tools are external actions (search/fetch); plugins are hot-pluggable, sandboxed (WASM), capability-restricted feature implementations.
+- **Subagents**: user-customizable sub-agents — essentially "forking another agent unit."
+- **Capability**: what it is permitted to do and how large its scope is — enforced by hardware/runtime.
 
-### 1.4 Agent 的生命周期
+### 1.4 The Agent Lifecycle
 
 ```
   born ──► live ──► fork ──► merge ──► migrate ──► heal ──► die
    │        │        │         │          │          │
-   │        │        │         │          │          └ 实例异常 → 另一实例从快照/CRDT 状态接管
-   │        │        │         │          └ 热迁移到另一物理/虚拟节点 (毫秒级)
-   │        │        │         └ 两实例状态无冲突合并 (CRDT)
-   │        │        └ 繁殖出子 agent / 副本
-   │        └ 持续运行:感知→认知→记忆→行动
-   └ 从不可变镜像一键孵化
+   │        │        │         │          │          └ instance fails → another instance takes over from snapshot/CRDT state
+   │        │        │         │          └ live-migrate to another physical/virtual node (millisecond-scale)
+   │        │        │         └ conflict-free merge of two instances' state (CRDT)
+   │        │        └ spawn a sub-agent / replica
+   │        └ continuous operation: perceive→cognize→remember→act
+   └ one-click hatch from an immutable image
 ```
 
 ---
 
-## 2. Agent 如何协作
+## 2. How Agents Collaborate
 
-### 2.1 寻址与身份
+### 2.1 Addressing and Identity
 
-- 每个 agent 有全局唯一语义地址(如 `thaliox://team-alpha/researcher-07`)。
-- 集群内服务发现 + 健康状态广播。
+- Each agent has a globally unique semantic address (e.g., `thaliox://team-alpha/researcher-07`).
+- In-cluster service discovery + health-status broadcast.
 
-### 2.2 holonic 模型:既是整体,又是部分
+### 2.2 The Holonic Model: Both a Whole and a Part
 
-每个 agent 是**自足的整体 (holon)**,又能融入更大的**团队 (holarchy)**。团队 = 一组有共享目标与分工角色的 agent。
+Each agent is a **self-sufficient whole (holon)**, yet can integrate into a larger **team (holarchy)**. A team = a group of agents with a shared goal and divided roles.
 
-### 2.3 通信
+### 2.3 Communication
 
-- **传输**:近期用 gRPC/QUIC;长期用硬件原生的向量消息原语 (VTCP)。
-- **语义消息**:在共享同一向量空间时直传向量;异构模型间经**向量翻译层**对齐。
-- **共享记忆空间**:团队有公共的语义空间 (SFS),可留下「作品」、共享知识。
+- **Transport**: gRPC/QUIC in the near term; a hardware-native Vector Message primitive (VTCP) in the long term.
+- **Semantic messages**: vectors transmitted directly when sharing the same vector space; aligned across heterogeneous models via a **vector translation layer**.
+- **Shared memory space**: a team has a common semantic space (SFS) where it can leave "artifacts" and share knowledge.
 
-### 2.4 协作范式 (可组合)
+### 2.4 Collaboration Paradigms (Composable)
 
-| 范式 | 说明 |
+| Paradigm | Description |
 |---|---|
-| **层级 (Hierarchy)** | 监督 agent ↔ 子 agent,任务分解下发 |
-| **市场 (Market)** | 任务拍卖,按能力/报价中标 |
-| **蜂群 (Swarm)** | 大量同质 agent 涌现式协作 |
-| **流水线 (Pipeline)** | agent 串成处理链 |
+| **Hierarchy** | supervisor agent ↔ sub-agents, task decomposition pushed down |
+| **Market** | task auctioning, won by capability/bid |
+| **Swarm** | large numbers of homogeneous agents collaborating emergently |
+| **Pipeline** | agents strung into a processing chain |
 
-### 2.5 状态共享、信任与容错
+### 2.5 State Sharing, Trust, and Fault Tolerance
 
-- **状态合并**:agent 状态用 **CRDT** 表达,多副本可无冲突合并(对应需求「合并」)。
-- **能力委派**:agent 之间可在 scope 内**委派/收回**能力令牌,委派可审计、可撤销。
-- **容错**:实例 A 异常 → 监督平面调度实例 B 从 A 的最近快照 + CRDT 增量恢复,继续未完成任务(对应需求「异常时由另一个实例解决」)。
+- **State merging**: agent state is expressed as a **CRDT**, so multiple replicas can merge conflict-free (satisfying the "merge" requirement).
+- **Capability delegation**: agents can **delegate/revoke** capability tokens within scope; delegation is auditable and revocable.
+- **Fault tolerance**: instance A fails → the supervision plane schedules instance B to recover from A's latest snapshot + CRDT deltas and continue the unfinished task (satisfying the "another instance resolves it on failure" requirement).
 
 ---
 
-## 3. AIOS 由哪些组件构成
+## 3. What Components Make Up the AIOS
 
-自上而下的全栈。每层都可独立运行、独立测试。
+A top-down full stack. Every layer can run and be tested independently.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│ L5  客户端 / 接入层                                              │
-│     多端客户端 (iOS/Android/macOS/Win) · 统一 API 网关           │
+│ L5  Client / Access layer                                       │
+│     multi-platform clients (iOS/Android/macOS/Win) · unified API gateway │
 ├────────────────────────────────────────────────────────────────┤
-│ L4  控制平面 —— 「AI 管理 AI」(灵魂层)                          │
-│     监督 Agent · 学习型调度器 · 自愈/自更新决策 · 全局审计        │
+│ L4  Control plane —— "AI manages AI" (the soul layer)           │
+│     supervisor agent · learned scheduler · self-healing/self-update decisions · global audit │
 ├────────────────────────────────────────────────────────────────┤
-│ L3  集群 / Fabric                                                │
-│     agent↔agent 协议 · 团队编排 · 服务发现 · 状态复制 (CRDT)      │
+│ L3  Cluster / Fabric                                            │
+│     agent↔agent protocol · team orchestration · service discovery · state replication (CRDT) │
 ├────────────────────────────────────────────────────────────────┤
-│ L2  Agent 运行时                                                 │
-│     microVM 生命周期 · 镜像/快照/迁移/合并 · 能力安全 (CAP)       │
+│ L2  Agent runtime                                               │
+│     microVM lifecycle · image/snapshot/migration/merge · capability security (CAP) │
 ├────────────────────────────────────────────────────────────────┤
-│ L1  Agent 内核能力                                               │
-│     Cognition(LLM 远程+本地) · Memory(向量) · Skills/Tools/      │
-│     Plugins(WASM) · Subagents · Identity · 模型服务              │
+│ L1  Agent kernel capabilities                                   │
+│     Cognition (LLM remote+local) · Memory (vector) · Skills/Tools/ │
+│     Plugins (WASM) · Subagents · Identity · model serving        │
 ├────────────────────────────────────────────────────────────────┤
-│ L0  基座 (随阶段向下替换)                                        │
-│     现在: Linux + KVM + cgroups + namespaces + eBPF              │
-│     终局: THALIOX 抽象机 + 协同设计的硅                          │
+│ L0  Substrate (replaced downward by stage)                      │
+│     Now: Linux + KVM + cgroups + namespaces + eBPF              │
+│     Endgame: THALIOX Abstract Machine + co-designed silicon     │
 └────────────────────────────────────────────────────────────────┘
 ```
 
-### 组件清单
+### Component List
 
-1. **基座 (L0)**:进程/内存/设备的物理管理。初期复用 Linux/KVM,后期逐层下推。
-2. **Agent 运行时 (L2)**:**Agent = 微虚拟机 (Firecracker/Cloud-Hypervisor)**。负责一键部署、快照、热迁移、A/B 自更新+回滚。
-3. **认知服务 (Model Service)**:统一 LLM 接口,远程多后端 + 本地量化模型 (candle/llama.cpp, GGUF)。
-4. **记忆子系统**:上下文管理 + 向量数据库 (Qdrant/LanceDB) + 概要生成 + 语义索引。
-5. **能力安全 (CAP)**:HMAC/硬件能力令牌,**scope 强制**,意图验证,能力委派与审计。
-6. **通信 Fabric (L3)**:agent↔agent 协议、团队编排、CRDT 状态复制、服务发现。
-7. **技能/工具/插件系统**:WASM 沙箱化、能力门控的可热插拔扩展。
-8. **学习型控制平面 (L4)**:监督 agent + RL 调度器,把调度/放置/扩缩/自愈/自更新做成**学出来的策略**而非手写启发式。
-9. **存储**:语义/向量优先的对象存储 (SFS);兼容层可挂载为传统目录 (FUSE) 供人类调试。
-10. **人类监督内核**:不可绕过的审计、一键接管、回滚能力。
-11. **API 网关 / 客户端 (L5)**:Rust (axum/tonic) 统一 API + Python/TS SDK + 多端客户端。
-
----
-
-## 4. Feature 清单
-
-### 已对标需求的核心能力
-- **F1 终身记忆**:session 全量 + 概要 + 向量索引,跨会话/跨实例持久。
-- **F2 一键部署**:`thaliox deploy <image>`,像 VMware 一样在物理/虚拟机上起一个 agent。
-- **F3 自更新/自愈**:内容寻址不可变镜像 + A/B 双槽 + 失败自动回滚;监督 agent 检测异常并重建。
-- **F4 多实例 + 关联/转移/合并/接管**:热迁移、CRDT 合并、故障接管。
-- **F5 离线本地模型**:内置小参数模型,断网可用。
-- **F6 统一 API**:Rust 核心 (axum/tonic),多语言 SDK。
-- **F7 集群成队**:agent↔agent 协作,组成协作团队。
-- **F8 多端客户端**:iOS/Android/macOS/Windows 接入,多客户端并发。
-
-### "格局打开" 的更高阶 Feature
-- **F9 数字生物学**:agent 可繁殖 (fork)、变异 (自更新)、消亡、被选择 → 系统在运行中**进化**出更优个体。
-- **F10 OS 溶进编译器**:可预测的模型数据流 → 编译期静态排布 + 学习型策略取代动态内核调度器。
-- **F11 抽象机契约先行**:在碰硬件前先定义《THALIOX 抽象机规范》,作为编译器/运行时/硅的共同靶子。
-- **F12 机密集群**:TEE/同态思路,让 agent 在互不信任的节点上安全协作。
-- **F13 AI 设计 AI 的硬件**:控制平面用 ML (AlphaChip 式) 参与设计下一代 THALIOX 芯片 → 「AI 重新定义 AI」闭环。
+1. **Substrate (L0)**: physical management of processes/memory/devices. Reuses Linux/KVM initially, pushed down layer by layer later.
+2. **Agent runtime (L2)**: **Agent = microVM (Firecracker/Cloud-Hypervisor)**. Handles one-click deployment, snapshots, live migration, and A/B self-update + rollback.
+3. **Cognition service (Model Service)**: a unified LLM interface, remote multi-backend + local quantized models (candle/llama.cpp, GGUF).
+4. **Memory subsystem**: context management + vector database (Qdrant/LanceDB) + summary generation + semantic indexing.
+5. **Capability security (CAP)**: HMAC/hardware capability tokens, **scope enforcement**, intent verification, capability delegation and audit.
+6. **Communication Fabric (L3)**: agent↔agent protocol, team orchestration, CRDT state replication, service discovery.
+7. **Skill/tool/plugin system**: WASM-sandboxed, capability-gated, hot-pluggable extensions.
+8. **Learned control plane (L4)**: supervisor agent + RL scheduler, making scheduling/placement/scaling/self-healing/self-update **learned policies** rather than hand-written heuristics.
+9. **Storage**: semantic/vector-first object storage (SFS); a compatibility layer can mount it as traditional directories (FUSE) for human debugging.
+10. **Human supervision kernel**: non-bypassable audit, one-click takeover, and rollback capabilities.
+11. **API gateway / clients (L5)**: a unified Rust (axum/tonic) API + Python/TS SDKs + multi-platform clients.
 
 ---
 
-## 5. 硬件愿景:THALIOX 机器大概什么样
+## 4. Feature List
 
-### 5.1 为什么不是 x86 + 现有 GPU
+### Core Capabilities Mapped to Requirements
+- **F1 Lifelong memory**: full session + summaries + vector indexes, persisted across sessions/instances.
+- **F2 One-click deployment**: `thaliox deploy <image>`, spinning up an agent on physical/virtual machines just like VMware.
+- **F3 Self-update/self-heal**: content-addressed immutable images + A/B dual-slot + automatic rollback on failure; the supervisor agent detects anomalies and rebuilds.
+- **F4 Multiple instances + association/transfer/merge/takeover**: live migration, CRDT merge, failure takeover.
+- **F5 Offline local model**: a built-in small-parameter model, usable when disconnected.
+- **F6 Unified API**: Rust core (axum/tonic), multi-language SDKs.
+- **F7 Cluster into teams**: agent↔agent collaboration, forming collaborative teams.
+- **F8 Multi-platform clients**: iOS/Android/macOS/Windows access, concurrent multiple clients.
 
-- **冯·诺依曼瓶颈 / 内存墙**:LLM 推理的首要瓶颈是把权重从 HBM 搬到计算单元——算力过剩,带宽饿死。
-- **动态调度开销**:通用 CPU 为「不知道要跑什么」而设计;AI 数据流是可预测的,这些动态机制是纯损耗。
-- **人类遗产**:通用栈背着大量与 AI 无关的包袱。
-
-### 5.2 THALIOX 机器的设计原则 (协同设计的硅)
-
-1. **计算-存储一体 (Compute-in/near-Memory)**:权重就放在计算单元旁,杀死内存墙。
-2. **数据流 / 编译器静态调度 (Groq 式确定性)**:芯片里**没有动态调度器**;THALIOX 编译器把 agent 的数据流图静态映射到计算阵列。OS 调度器在此溶进编译器。
-3. **同质众核 fabric**:大量小型「神经核」(各带本地 SRAM) 经片上网格 (NoC) 互连;跨芯片、跨节点用**光互连**透明延展——"集群即计算机"。
-4. **集合通信是硬件原语**:all-reduce / broadcast / 向量消息收发 (VTCP) 做进 ISA,而非软件库。
-5. **硬件能力安全 (CHERI 式)**:每个内存字带能力标签,CAP 模型在硅层不可伪造地强制。
-6. **硬件原生快照/恢复**:agent 整个状态可在硬件级冻结/解冻 → 迁移与自愈做到极致。
-7. **语义系统调用 (NIL) 即指令**:张量算子、注意力预算计量、能力检查,都是 ISA 原语。
-
-### 5.3 一句话描绘
-
-> **THALIOX 机器 = 一张「计算-存储一体」的众核晶格,由编译器确定性调度、在硅层强制能力安全、经光互连原生集群化,且 AI 间通信是一条硬件指令。** 真正属于 AI 自己的机器。
-
-### 5.4 现实锚点 (证明每块拼图都可造)
-
-Groq(确定性数据流)· Cerebras(晶圆级)· Tenstorrent(RISC-V + AI)· Etched/Sohu(Transformer 入硅)· Google TPU+XLA+AlphaChip(芯片/编译器协同 + RL 布局)· CHERI(硬件能力)· PIM/CXL(近存计算/内存语义)· 光互连。THALIOX 的差异化:把这些切片缝合成一个「AI 管理 AI」的连贯整体。
+### Higher-Order "Open-the-Aperture" Features
+- **F9 Digital biology**: agents can reproduce (fork), mutate (self-update), die, and be selected → the system **evolves** fitter individuals at runtime.
+- **F10 OS dissolves into the compiler**: predictable model dataflow → compile-time static layout + learned policies replace the dynamic kernel scheduler.
+- **F11 Abstract-machine contract first**: define the *THALIOX Abstract Machine Specification* before touching hardware, as the common target for compiler/runtime/silicon.
+- **F12 Confidential clusters**: TEE/homomorphic approaches, letting agents collaborate securely on mutually distrustful nodes.
+- **F13 AI designs AI's hardware**: the control plane uses ML (AlphaChip-style) to help design the next-generation THALIOX chip → closing the "AI redefines AI" loop.
 
 ---
 
-## 6. 分步实现与资本路径
+## 5. Hardware Vision: Roughly What a THALIOX Machine Looks Like
 
-铁律:**每一里程碑都独立可用、可演示、可融资。**
+### 5.1 Why Not x86 + Existing GPUs
 
-| 地平线 | 里程碑 | 交付物 | 证明什么 / 解锁什么资本 |
+- **Von Neumann bottleneck / memory wall**: the primary bottleneck of LLM inference is moving weights from HBM to compute units — compute is overabundant, starved by bandwidth.
+- **Dynamic-scheduling overhead**: general-purpose CPUs are designed for "not knowing what will run"; AI dataflow is predictable, so these dynamic mechanisms are pure overhead.
+- **Human legacy**: the general-purpose stack carries a heavy load of baggage unrelated to AI.
+
+### 5.2 Design Principles of the THALIOX Machine (Co-Designed Silicon)
+
+1. **Compute-storage unification (Compute-in/near-Memory)**: weights sit right beside the compute units, killing the memory wall.
+2. **Dataflow / compiler-static scheduling (Groq-style determinism)**: there is **no dynamic scheduler** in the chip; the THALIOX compiler statically maps the agent's dataflow graph onto the compute array. The OS scheduler dissolves into the compiler here.
+3. **Homogeneous many-core fabric**: large numbers of small "neural cores" (each with local SRAM) interconnected by an on-chip mesh (NoC); extended transparently across chips and nodes via **optical interconnect** — "the cluster is the computer."
+4. **Collective communication as a hardware primitive**: all-reduce / broadcast / Vector Message send-receive (VTCP) built into the ISA, rather than a software library.
+5. **Hardware capability security (CHERI-style)**: every memory word carries a capability tag; the CAP model is unforgeably enforced at the silicon layer.
+6. **Hardware-native snapshot/restore**: an agent's entire state can be frozen/thawed at the hardware level → migration and self-healing taken to the extreme.
+7. **Semantic syscalls (NIL) as instructions**: tensor operators, Attention Budget metering, and capability checks are all ISA primitives.
+
+### 5.3 One-Sentence Portrait
+
+> **The THALIOX machine = a "compute-storage-unified" many-core lattice, deterministically scheduled by the compiler, enforcing capability security at the silicon layer, natively clustered via optical interconnect, where AI-to-AI communication is a single hardware instruction.** A machine that truly belongs to AI itself.
+
+### 5.4 Reality Anchors (Proving Every Puzzle Piece Is Buildable)
+
+Groq (deterministic dataflow) · Cerebras (wafer-scale) · Tenstorrent (RISC-V + AI) · Etched/Sohu (Transformer into silicon) · Google TPU+XLA+AlphaChip (chip/compiler co-design + RL placement) · CHERI (hardware capabilities) · PIM/CXL (near-memory compute / memory semantics) · optical interconnect. THALIOX's differentiation: stitching these slices into one coherent "AI manages AI" whole.
+
+---
+
+## 6. Staged Implementation and Capital Path
+
+The iron rule: **every milestone is independently usable, demonstrable, and fundable.**
+
+| Horizon | Milestone | Deliverable | What it proves / what capital it unlocks |
 |---|---|---|---|
-| **H1 软件层 (跑在 Linux)** | ✅ M1 单机 MVP | Rust daemon + LLM(远程+本地) + 向量记忆 + 工具 + 统一 API + 单客户端 | 编程模型成立;有可用产品 → 种子轮/社区 — **已交付 `v0.1.0` (2026-06-05),见 [M1-MILESTONE](M1-MILESTONE.md)** |
-| | M2 microVM 化 | 一键部署 + 快照/恢复 + 自更新回滚 | 兑现 F2/F3 |
-| | M3 多实例 HA | 热迁移 + CRDT 合并 + 自愈接管 | 兑现 F4 |
-| | M4 集群 + 多端 | agent↔agent + 团队编排 + 多端客户端 | 兑现 F7/F8 → A 轮 |
-| | M5 学习型控制平面 | RL 调度 + 监督 agent + 自优化 | 「AI 管理 AI」成型,差异化护城河 |
-| **H2 专门化 (riding Linux)** | M6 向下压栈 | eBPF 观测/安全 → unikernel/抽象机契约 → kernel-bypass 向量传输 → FPGA 原语 | 真实能效曲线 → B 轮/战略投资 |
-| **H3 协同设计的硅** | M7 单原语流片 | 只流片一个独属于你的原语(向量传输 NIC / 能力内存控制器 / 数据流注意力引擎) | 硬件护城河 → 大额硬件融资 |
-| | M8 垂直整合节点 + fabric | 完整 THALIOX 机器 | 真正属于 AI 的 OS |
+| **H1 Software layer (running on Linux)** | ✅ M1 single-node MVP | Rust daemon + LLM (remote+local) + vector memory + tools + unified API + single client | the programming model holds; a usable product → seed round/community — **shipped `v0.1.0` (2026-06-05), see [M1-MILESTONE](M1-MILESTONE.md)** |
+| | M2 microVM-ization | one-click deployment + snapshot/restore + self-update rollback | delivers F2/F3 |
+| | M3 multi-instance HA | live migration + CRDT merge + self-healing takeover | delivers F4 |
+| | M4 cluster + multi-platform | agent↔agent + team orchestration + multi-platform clients | delivers F7/F8 → Series A |
+| | M5 learned control plane | RL scheduling + supervisor agent + self-optimization | "AI manages AI" takes shape, the differentiating moat |
+| **H2 Specialization (riding Linux)** | M6 push the stack down | eBPF observability/security → unikernel/abstract-machine contract → kernel-bypass vector transport → FPGA primitives | a real efficiency curve → Series B/strategic investment |
+| **H3 Co-designed silicon** | M7 single-primitive tape-out | tape out just one primitive that is uniquely yours (vector-transport NIC / capability memory controller / dataflow attention engine) | a hardware moat → large hardware financing |
+| | M8 vertically integrated node + fabric | a complete THALIOX machine | an OS that truly belongs to AI |
 
 ---
 
-## 7. 可行性与可持续性
+## 7. Feasibility and Sustainability
 
-- **为何可行**:分步登月把一个不可能的整体,拆成一串各自可融资、可证伪的赌注;每块技术拼图都已有现实公司证明能造。
-- **可持续性**:H1 即产生产品与收入/社区,为 H2/H3 输血;开源策略把「拥挤的软件赛道」从对手变成生态。
-- **最大新风险**:不是方向错,而是「想一次做完所有层」。守住「每级阶梯独立有价值」是唯一活法。
-- **诚实的对标**:软件层 (Rust agent OS) 已有 AIOS、rivet/agent-os、astrid、eliza 等强竞品。差异化只能来自 (a) F1–F8 的整合度 + 自愈/集群,(b) H2/H3 没人敢碰的垂直野心。
+- **Why it's feasible**: the Staged Moonshot breaks one impossible whole into a chain of individually fundable, falsifiable bets; every technology puzzle piece already has a real company proving it can be built.
+- **Sustainability**: H1 produces a product and revenue/community right away, feeding H2/H3; the open-source strategy turns the "crowded software lane" from a rival into an ecosystem.
+- **The biggest novel risk**: not that the direction is wrong, but "trying to do all layers at once." Holding the line that "each rung of the ladder is independently valuable" is the only way to survive.
+- **An honest benchmark**: the software layer (a Rust agent OS) already has strong competitors like AIOS, rivet/agent-os, astrid, eliza. Differentiation can only come from (a) the integration of F1–F8 + self-healing/clustering, and (b) the vertical ambition of H2/H3 that no one else dares to touch.
 
 ---
 
-## 8. 立即下一步
+## 8. Immediate Next Steps
 
-1. **Phase 0 产物**:起草《THALIOX 抽象机规范》(`docs/rfcs/0001-abstract-machine.md`)——定义向量消息、注意力预算、能力令牌等原语,作为编译器/运行时/硅的共同靶子。
-2. **M1 工程骨架**:Rust workspace + crate 划分 (core / runtime / memory / cognition / fabric / cap / api)。
-3. 保持北极星与三原则,每个 PR 都回答:「它服务于哪个被验证的假设?」
+1. **Phase 0 artifact**: draft the *THALIOX Abstract Machine Specification* (`docs/rfcs/0001-abstract-machine.md`) — defining primitives like Vector Message, Attention Budget, and Capability Token as the common target for compiler/runtime/silicon.
+2. **M1 engineering skeleton**: a Rust workspace + crate division (core / runtime / memory / cognition / fabric / cap / api).
+3. Hold to the North Star and the three principles; every PR answers: "which validated hypothesis does it serve?"

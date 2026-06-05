@@ -1,8 +1,10 @@
-//! # autonomous_agent — LLM tool-calling 闭环
+//! # autonomous_agent — LLM tool-calling loop
 //!
-//! 给 agent 一个目标,**模型自己决定调哪个工具**(web_search / fetch),执行、把
-//! 结果喂回、再思考,直到给出文本答案。每轮思考受预算门控,每次工具调用走完整
-//! 能力门控 + 审计。无 LLM key 时用脚本化 mock 演示同一条闭环。
+//! Give the agent a goal and **the model itself decides which tool to call**
+//! (web_search / fetch), executes it, feeds the result back, thinks again, until
+//! it produces a text answer. Each think step is budget-gated; each tool call
+//! goes through the full capability gate + audit. Without an LLM key, a scripted
+//! mock demonstrates the same loop.
 //!
 //! ```bash
 //! OPENAI_API_KEY=...  OPENAI_BASE_URL=...  THALIOX_MODEL=glm-5.1 \
@@ -60,7 +62,7 @@ fn pick_provider(has_tavily: bool) -> (Arc<dyn LlmProvider>, String, bool) {
         }
         (Arc::new(p), m, true)
     } else {
-        // 离线:脚本化 mock,演示同一条闭环(调一次工具再答)。
+        // Offline: a scripted mock demonstrating the same loop (call a tool once, then answer).
         let (name, input) = if has_tavily {
             ("web_search", "THALIOX AI operating system")
         } else {
@@ -75,7 +77,7 @@ fn pick_provider(has_tavily: bool) -> (Arc<dyn LlmProvider>, String, bool) {
                     arguments: format!(r#"{{"input":"{input}"}}"#),
                 }],
             ),
-            Completion::text("(离线 mock)已调用工具并完成。", 12),
+            Completion::text("(offline mock) called the tool and finished.", 12),
         ]);
         (Arc::new(mock), "local-mock(scripted)".into(), false)
     }
@@ -117,32 +119,31 @@ async fn main() {
     agent.start().unwrap();
 
     let goal = if has_tavily {
-        "用 web_search 查 'THALIOX AI-native operating system' 是什么,再用一句中文总结你看到的内容。"
+        "Use web_search to find out what 'THALIOX AI-native operating system' is, then summarize what you saw in one sentence."
     } else {
-        "用 fetch 抓取 https://example.com 的内容,再用一句话说明它是什么。"
+        "Use fetch to retrieve the content of https://example.com, then explain in one sentence what it is."
     };
 
-    println!("→ THALIOX 自主 agent(LLM tool-calling 闭环)");
+    println!("→ THALIOX autonomous agent (LLM tool-calling loop)");
     println!(
-        "  model '{model}'  {}  工具: fetch{}\n",
-        if live {
-            "(真实 LLM)"
-        } else {
-            "(离线 mock)"
-        },
+        "  model '{model}'  {}  tools: fetch{}\n",
+        if live { "(real LLM)" } else { "(offline mock)" },
         if has_tavily { " · web_search" } else { "" }
     );
-    println!("目标: {goal}\n");
+    println!("goal: {goal}\n");
 
     match agent.run(goal, 6).await {
-        Ok(answer) => println!("最终答案: {}", answer.trim()),
-        Err(e) => println!("失败: {e}"),
+        Ok(answer) => println!("final answer: {}", answer.trim()),
+        Err(e) => println!("failed: {e}"),
     }
 
-    println!("\n模型自主决策轨迹(审计 {} 条):", agent.audit().len());
+    println!(
+        "\nmodel's autonomous decision trail ({} audit records):",
+        agent.audit().len()
+    );
     for r in agent.audit() {
         let mark = if r.allowed { "✓" } else { "✗" };
         println!("  {mark} {:?} cost={} {}", r.op, r.cost, r.target);
     }
-    println!("余 {}", agent.remaining_budget());
+    println!("remaining {}", agent.remaining_budget());
 }

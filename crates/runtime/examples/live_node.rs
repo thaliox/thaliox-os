@@ -1,11 +1,12 @@
-//! # live_node — 真实 LLM 驱动一个 agent
+//! # live_node — a real LLM driving an agent
 //!
-//! 与 `single_node` 同一条链路,但 cognition 接**真实模型**(Anthropic / OpenAI,
-//! 或任意兼容网关)。无 API key 时优雅退化到离线 mock,所以随时可跑。
+//! The same pipeline as `single_node`, but cognition connects to a **real model**
+//! (Anthropic / OpenAI, or any compatible gateway). Without an API key it
+//! gracefully degrades to an offline mock, so it runs anytime.
 //!
 //! ```bash
 //! ANTHROPIC_API_KEY=sk-ant-...  cargo run -p thaliox-runtime --example live_node
-//! #   可选: OPENAI_API_KEY / ANTHROPIC_BASE_URL / OPENAI_BASE_URL / THALIOX_MODEL
+//! #   Optional: OPENAI_API_KEY / ANTHROPIC_BASE_URL / OPENAI_BASE_URL / THALIOX_MODEL
 //! ```
 
 use std::sync::Arc;
@@ -59,7 +60,10 @@ fn pick_provider() -> (Arc<dyn LlmProvider>, String, bool) {
         }
         (Arc::new(p), model, true)
     } else {
-        let mock = MockProvider::new("THALIOX:一个为 AI 原生设计、AI 自管理的操作系统。", 12);
+        let mock = MockProvider::new(
+            "THALIOX: an AI-native, AI-self-managed operating system.",
+            12,
+        );
         (Arc::new(mock), "local-mock".into(), false)
     }
 }
@@ -73,14 +77,14 @@ async fn main() {
         provider.id(),
         model,
         if live {
-            "(真实 LLM)"
+            "(real LLM)"
         } else {
-            "(无 key → 离线 mock 退化)"
+            "(no key → degraded to offline mock)"
         }
     );
     if !live {
         println!(
-            "  设 ANTHROPIC_API_KEY 或 OPENAI_API_KEY 接真实模型(可选 *_BASE_URL / THALIOX_MODEL)"
+            "  set ANTHROPIC_API_KEY or OPENAI_API_KEY to connect a real model (optional *_BASE_URL / THALIOX_MODEL)"
         );
     }
     println!();
@@ -96,8 +100,8 @@ async fn main() {
     .grant(cap("agent-live", Permission::Read, "mem://agent-live/*"));
     agent.start().unwrap();
 
-    // think —— 真实推理
-    let prompt = "用一句话定义 AI 原生操作系统(THALIOX)。";
+    // think —— real inference
+    let prompt = "Define an AI-native operating system (THALIOX) in one sentence.";
     let thought = match agent
         .act(Action::Think {
             prompt: prompt.into(),
@@ -107,7 +111,7 @@ async fn main() {
     {
         Ok(Outcome::Thought(c)) => {
             println!(
-                "· think  → \"{}\"\n          (真实 token={}, 声明成本=500, 余 {})",
+                "· think  → \"{}\"\n          (real tokens={}, declared cost=500, remaining {})",
                 c.content.trim(),
                 c.tokens,
                 agent.remaining_budget()
@@ -121,7 +125,7 @@ async fn main() {
         _ => return,
     };
 
-    // remember —— 把思考写进记忆(受 Write 门控)
+    // remember —— write the thought into memory (gated by Write)
     let obj = SemanticObject {
         id: "thought-1".into(),
         vector: vec![0.1, 0.2, 0.3],
@@ -137,12 +141,12 @@ async fn main() {
         .await
     {
         println!(
-            "· remember → 已记忆 '{id}'  余 {}",
+            "· remember → remembered '{id}'  remaining {}",
             agent.remaining_budget()
         );
     }
 
-    // recall —— 检索回来(受 Read 门控)
+    // recall —— retrieve it back (gated by Read)
     if let Ok(Outcome::Recalled(hits)) = agent
         .act(Action::Recall {
             query: vec![0.1, 0.2, 0.3],
@@ -153,14 +157,14 @@ async fn main() {
         && let Some(o) = hits.first()
     {
         println!(
-            "· recall → 召回 '{}': \"{}\"",
+            "· recall → recalled '{}': \"{}\"",
             o.id,
             String::from_utf8_lossy(&o.data).trim()
         );
     }
 
     println!(
-        "\n审计 {} 条(真实 LLM → agent → memory,全程 INV-1/2/4 门控):",
+        "\n{} audit records (real LLM → agent → memory, fully gated by INV-1/2/4):",
         agent.audit().len()
     );
     for r in agent.audit() {

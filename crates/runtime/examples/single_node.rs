@@ -1,7 +1,8 @@
-//! # 单机 MVP — runtime 驱动一个 agent 跑通全链路
+//! # single-node MVP — runtime driving one agent through the full pipeline
 //!
-//! cognition → memory → 注意力预算 → 能力校验,每个操作都过 TAM 三重门控
-//! (INV-2 能力 · INV-1 预算 · INV-4 审计)。离线可跑(本地 MockProvider)。
+//! cognition → memory → attention budget → capability check; every operation
+//! passes the TAM triple gate (INV-2 capability · INV-1 budget · INV-4 audit).
+//! Runs offline (local MockProvider).
 //!
 //! ```bash
 //! cargo run -p thaliox-runtime --example single_node
@@ -42,43 +43,49 @@ fn note(id: &str, vector: Vec<f32>, text: &str) -> SemanticObject {
     }
 }
 
-/// 执行一个动作并打印结果(成功扣预算,失败被门控拒绝)。
+/// Execute an action and print the result (success charges budget, failure is denied by the gate).
 async fn step(agent: &mut Agent, label: &str, action: Action) {
     match agent.act(action).await {
         Ok(Outcome::Thought(c)) => println!(
-            "· {label:<28} → 思考: \"{}\"  (-{} tok)  余 {}",
+            "· {label:<28} → think: \"{}\"  (-{} tok)  remaining {}",
             c.content,
             c.tokens,
             agent.remaining_budget()
         ),
         Ok(Outcome::Remembered(id)) => println!(
-            "· {label:<28} → 已记忆 '{id}'  余 {}",
+            "· {label:<28} → remembered '{id}'  remaining {}",
             agent.remaining_budget()
         ),
         Ok(Outcome::Recalled(hits)) => {
             let ids: Vec<&str> = hits.iter().map(|o| o.id.as_str()).collect();
             println!(
-                "· {label:<28} → 召回 {} 条 {ids:?}  余 {}",
+                "· {label:<28} → recalled {} {ids:?}  remaining {}",
                 hits.len(),
                 agent.remaining_budget()
             );
         }
         Ok(Outcome::Invoked(out)) => println!(
-            "· {label:<28} → 工具输出: {}  余 {}",
+            "· {label:<28} → tool output: {}  remaining {}",
             out.chars().take(50).collect::<String>(),
             agent.remaining_budget()
         ),
-        Err(e) => println!("· {label:<28} ✗ 拒绝: {e}  余 {}", agent.remaining_budget()),
+        Err(e) => println!(
+            "· {label:<28} ✗ denied: {e}  remaining {}",
+            agent.remaining_budget()
+        ),
     }
 }
 
 #[tokio::main]
 async fn main() {
-    // memory(L1)+ cognition(L1,本地离线)
+    // memory (L1) + cognition (L1, local offline)
     let memory = Arc::new(InMemorySpace::new());
-    let mind = Arc::new(MockProvider::new("记下两条会议要点,稍后检索", 8));
+    let mind = Arc::new(MockProvider::new(
+        "Note down two meeting points, retrieve later",
+        8,
+    ));
 
-    // 一个 agent:50 token 预算;能力 = 只能写 notes/*、可读全空间
+    // One agent: 50-token budget; capabilities = can only write notes/*, can read the whole space
     let mut agent = Agent::new(
         AgentId::new("agent-007"),
         AttentionBudget::new(50, 1000),
@@ -92,20 +99,20 @@ async fn main() {
     ))
     .grant(cap("agent-007", Permission::Read, "mem://agent-007/*"));
 
-    println!("→ THALIOX M1 单机 MVP\n");
+    println!("→ THALIOX M1 single-node MVP\n");
     println!(
-        "agent: {}  预算: 50 tok  能力: Write(notes/*) · Read(*)",
+        "agent: {}  budget: 50 tok  capabilities: Write(notes/*) · Read(*)",
         agent.id()
     );
     agent.start().unwrap();
     println!("[start] phase = {:?}\n", agent.phase());
 
-    // 全链路:思考 → 写记忆 → 检索
+    // Full pipeline: think → write memory → retrieve
     step(
         &mut agent,
-        "think 规划",
+        "think plan",
         Action::Think {
-            prompt: "记住会议要点".into(),
+            prompt: "Remember the meeting points".into(),
             cost: 8,
         },
     )
@@ -114,7 +121,7 @@ async fn main() {
         &mut agent,
         "remember notes/n1",
         Action::Remember {
-            object: note("notes/n1", vec![1.0, 0.0, 0.0], "要点A:Q3 路线图"),
+            object: note("notes/n1", vec![1.0, 0.0, 0.0], "Point A: Q3 roadmap"),
             cost: 5,
         },
     )
@@ -123,7 +130,7 @@ async fn main() {
         &mut agent,
         "remember notes/n2",
         Action::Remember {
-            object: note("notes/n2", vec![0.0, 1.0, 0.0], "要点B:预算评审"),
+            object: note("notes/n2", vec![0.0, 1.0, 0.0], "Point B: budget review"),
             cost: 5,
         },
     )
@@ -139,29 +146,29 @@ async fn main() {
     )
     .await;
 
-    // 门控演示
-    println!("\n-- 门控演示 --");
+    // Gate demo
+    println!("\n-- gate demo --");
     step(
         &mut agent,
-        "remember secret (越权)",
+        "remember secret (out of scope)",
         Action::Remember {
-            object: note("secret", vec![0.0, 0.0, 1.0], "不在 scope"),
+            object: note("secret", vec![0.0, 0.0, 1.0], "not in scope"),
             cost: 5,
         },
     )
     .await;
     step(
         &mut agent,
-        "think 巨型 (超预算)",
+        "think huge (over budget)",
         Action::Think {
-            prompt: "超大任务".into(),
+            prompt: "huge task".into(),
             cost: 40,
         },
     )
     .await;
 
-    // INV-4 审计日志
-    println!("\n审计日志 (INV-4,共 {} 条):", agent.audit().len());
+    // INV-4 audit log
+    println!("\naudit log (INV-4, {} records):", agent.audit().len());
     for r in agent.audit() {
         let mark = if r.allowed { "✓" } else { "✗" };
         let perm = r
@@ -175,6 +182,6 @@ async fn main() {
     }
 
     println!(
-        "\n✓ 全链路跑通:每个操作 = 能力校验(INV-2) → 预算扣减(INV-1) → 作用于状态 → 审计(INV-4)。"
+        "\n✓ Full pipeline complete: each operation = capability check (INV-2) → budget charge (INV-1) → act on state → audit (INV-4)."
     );
 }

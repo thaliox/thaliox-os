@@ -1,73 +1,73 @@
-# M1 — 单机 MVP 里程碑总结
+# M1 — single-node MVP milestone summary
 
-> **状态:✅ 完成 · `v0.1.0` · 2026-06-05**
-> 证明的假设:**THALIOX 的编程模型成立** —— 一个单机 agent,在 TAM 五不变量约束下,能自主完成任务。
+> **Status: ✅ Done · `v0.1.0` · 2026-06-05**
+> Hypothesis proven: **the THALIOX programming model holds** — a single-node agent, under the constraints of the TAM five invariants, can complete a task autonomously.
 
-M1 是 [MASTER_PLAN](MASTER_PLAN.md) §6 H1 地平线的第一级阶梯。它的唯一职责是把
-[RFC-0001 TAM 抽象机](rfcs/0001-abstract-machine.md)从纸面契约变成**可运行、可证伪**的代码,
-先跑在 Linux 上,但语义不绑死 Linux——为 H2/H3 的"替换实现"留好接缝。
+M1 is the first rung of the H1 horizon in [MASTER_PLAN](MASTER_PLAN.md) §6. Its sole job is to turn
+[RFC-0001 TAM Abstract Machine](rfcs/0001-abstract-machine.md) from a paper contract into **runnable, falsifiable** code,
+running on Linux first but with semantics not hard-wired to Linux — leaving the seams for H2/H3 "replace the implementation."
 
-## 1. 交付了什么
+## 1. What was delivered
 
-一条端到端闭环:**给 agent 一个目标 → 模型自主决定调哪个工具 → 执行 → 结果喂回 → 再思考 → 给出答案**,
-全程受注意力预算与能力令牌约束、逐笔审计。
+One end-to-end loop: **give the agent a goal → the model autonomously decides which tool to call → execute → feed the result back → think again → produce an answer**,
+all of it bounded by the attention budget and capability tokens, audited per operation.
 
-| 能力 | crate | 说明 |
+| Capability | crate | Description |
 |---|---|---|
-| 认知 | `cognition` | 统一 `LlmProvider::complete(messages, tools)`;Anthropic Messages / OpenAI Chat Completions(及任意兼容网关)双向渲染+解析;离线 `MockProvider` 退化 |
-| 记忆 | `memory` | `SemanticSpace` 向量记忆,remember / recall |
-| 工具 | `tools` | `web_search`(Tavily)/ `fetch`,实现 `Tool` 契约,带 `description()` 广播给模型 |
-| 自主循环 | `runtime` | `Agent::run(goal, max_iters)`:think(广播工具)→ 模型 `tool_calls` → act(Invoke)→ 结果喂回 → 再 think,失败也喂回让模型自纠 |
-| 预算 | `core` / `runtime` | 预留→真实 token `settle` 对账;失败退款 |
-| 能力 | `core` / `cap` | 签名 + 过期 + scope 三重校验,act 前置 |
-| 审计 | `runtime` | 每次 think / invoke 记录 op·cost·target·allowed |
-| 网关 | `api` | axum HTTP:agent 生命周期 + think / remember / recall / invoke + 审计查询 |
+| Cognition | `cognition` | Unified `LlmProvider::complete(messages, tools)`; bidirectional render + parse for Anthropic Messages / OpenAI Chat Completions (and any compatible gateway); offline `MockProvider` fallback |
+| Memory | `memory` | `SemanticSpace` vector memory, remember / recall |
+| Tools | `tools` | `web_search` (Tavily) / `fetch`, implementing the `Tool` contract, with `description()` broadcast to the model |
+| Autonomous loop | `runtime` | `Agent::run(goal, max_iters)`: think (broadcast tools) → model `tool_calls` → act (Invoke) → feed result back → think again; failures are fed back too so the model can self-correct |
+| Budget | `core` / `runtime` | Reserve → real-token `settle` reconciliation; refund on failure |
+| Capability | `core` / `cap` | Signature + expiry + scope triple check, enforced before act |
+| Audit | `runtime` | Every think / invoke records op·cost·target·allowed |
+| Gateway | `api` | axum HTTP: agent lifecycle + think / remember / recall / invoke + audit queries |
 
-## 2. 五不变量的落地映射
+## 2. How the five invariants map to the implementation
 
-| 不变量 | M1 如何强制 |
+| Invariant | How M1 enforces it |
 |---|---|
-| **INV-1 预算守恒** | 每次 think / invoke 先按预留扣减,执行后 `settle(reserved, actual)` 对账到真实 token;失败 `settle(reserved, 0)` 全额退款 |
-| **INV-2 能力前置** | `act` 在任何副作用前校验能力令牌:签名(可插 `CapabilityVerifier`)+ 未过期 + `authorizes(perm, resource, target)` scope 强制 |
-| **INV-3 向量保真** | 记忆经 `SemanticSpace` 存取,不降维成字符串键 |
-| **INV-4 可审计** | 每个 `SemanticCall` 落 `AuditRecord`(op / cost / target / permission_used / allowed) |
-| **INV-5 人类底线** | 能力可撤销、预算硬上限、全审计可回放;Sovereign 凌驾一切 |
+| **INV-1 budget conservation** | Every think / invoke first deducts against a reservation, then `settle(reserved, actual)` reconciles to real tokens after execution; on failure `settle(reserved, 0)` refunds in full |
+| **INV-2 capability first** | `act` verifies the capability token before any side effect: signature (pluggable `CapabilityVerifier`) + not expired + `authorizes(perm, resource, target)` scope enforcement |
+| **INV-3 vector fidelity** | Memory is stored and retrieved via `SemanticSpace`, never downgraded to string keys |
+| **INV-4 auditable** | Every `SemanticCall` writes an `AuditRecord` (op / cost / target / permission_used / allowed) |
+| **INV-5 humans are the floor** | Capabilities are revocable, the budget has a hard ceiling, the full audit is replayable; the Sovereign overrides everything |
 
-## 3. 实测证据
+## 3. Empirical evidence
 
-**真实模型 glm-5.1(经 OpenAI 兼容网关)+ Tavily web_search**,目标:
-> "用 web_search 查 'THALIOX AI-native operating system' 是什么,再用一句中文总结。"
+**Real model glm-5.1 (via an OpenAI-compatible gateway) + Tavily web_search**, goal:
+> "Use web_search to find out what 'THALIOX AI-native operating system' is, then summarize what you saw in one sentence."
 
-模型**自主**决定调 `web_search`(并非调用方编排),执行真实搜索,把结果喂回后总结。审计轨迹:
+The model **autonomously** decided to call `web_search` (not orchestrated by the caller), ran a real search, and summarized after the result was fed back. Audit trail:
 
 ```
-✓ Think       cost=315  self            ← 模型看到工具描述,决定调 web_search
-✓ ToolInvoke  cost=303  tool://web_search ← Tavily 真实搜索
-✓ Think       cost=858  self            ← 据搜索结果总结
-余 48524 / 50000(逐笔真实 token 对账)
+✓ Think       cost=315  self            ← model sees the tool description, decides to call web_search
+✓ ToolInvoke  cost=303  tool://web_search ← real Tavily search
+✓ Think       cost=858  self            ← summarizes from the search result
+remaining 48524 / 50000 (per-operation real-token reconciliation)
 ```
 
-这一步是从"被编排的工具执行"到"自主 agent"的质变:决策权在模型,约束权在 TAM。
+This step is the qualitative leap from "orchestrated tool execution" to "autonomous agent": decision authority sits with the model, constraint authority with TAM.
 
-## 4. 质量门
+## 4. Quality gates
 
-四门全绿(CI 铁律,见 [rust-toolchain](../README.md)):
+All four gates green (CI iron law, see [rust-toolchain](../README.md)):
 
 - `cargo fmt --all --check`
 - `cargo clippy --workspace --all-targets -- -D warnings`
-- `cargo test --workspace` — **30 测试**(纯函数 + 闭环 + 网关 oneshot)
+- `cargo test --workspace` — **30 tests** (pure functions + loop + gateway oneshot)
 - `RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps`
 
-8 crate · 6 example(`single_node` / `live_node` / `tool_agent` / `secure_agent` / `autonomous_agent` / `gateway`)。
+8 crates · 6 examples (`single_node` / `live_node` / `tool_agent` / `secure_agent` / `autonomous_agent` / `gateway`).
 
-## 5. 刻意留白(M2+ 再填)
+## 5. Deliberate gaps (filled in M2+)
 
-- `fabric` 仅有骨架——agent↔agent 协作、团队编排、CRDT 在 M4。
-- 记忆是进程内 `InMemorySpace`;真实向量库(如 Qdrant)与持久化在后续。
-- 能力签名当前可注入 `CapabilityVerifier`,生产级密钥管理待 M2。
-- 单进程、无快照/恢复——这正是 **M2 microVM 化**的交付物。
+- `fabric` is skeleton-only — agent↔agent collaboration, team orchestration, and CRDTs land in M4.
+- Memory is an in-process `InMemorySpace`; a real vector store (e.g. Qdrant) and persistence come later.
+- Capability signing currently accepts an injected `CapabilityVerifier`; production-grade key management is pending M2.
+- Single process, no snapshot/restore — that is exactly the deliverable of **M2 microVM-ization**.
 
-## 6. 下一站:M2 microVM 化
+## 6. Next stop: M2 microVM-ization
 
-兑现 F2/F3:一键部署 + 快照/恢复 + 自更新回滚。把 M1 这条已验证的闭环,
-装进可隔离、可迁移、可回滚的运行壳里。
+Deliver F2/F3: one-click deploy + snapshot/restore + self-update rollback. Take this already-validated loop from M1
+and package it into an isolatable, migratable, rollbackable runtime shell.

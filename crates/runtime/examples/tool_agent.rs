@@ -1,11 +1,12 @@
-//! # tool_agent — agent 调 web_search / fetch
+//! # tool_agent — agent calls web_search / fetch
 //!
-//! agent 通过工具触达外界(搜索 / 抓取),每次 ToolInvoke 都过 Execute 能力
-//! 门控 + 预算对账 + 审计;搜索结果写进记忆并可检索。
+//! The agent reaches the outside world through tools (search / fetch); every
+//! ToolInvoke passes the Execute capability gate + budget reconciliation +
+//! audit; search results are written into memory and can be retrieved.
 //!
 //! ```bash
 //! TAVILY_API_KEY=tvly-...  cargo run -p thaliox-runtime --example tool_agent
-//! #   无 key 时跳过 web_search;fetch 始终可用(任意 URL)
+//! #   Without a key, web_search is skipped; fetch is always available (any URL)
 //! ```
 
 use std::sync::Arc;
@@ -72,13 +73,13 @@ async fn main() {
     };
     agent.start().unwrap();
 
-    println!("→ THALIOX 工具系统 — agent 调 web_search / fetch");
+    println!("→ THALIOX tool system — agent calls web_search / fetch");
     println!(
-        "agent: {}  能力: Execute(tool://*) · Write/Read(mem)\n",
+        "agent: {}  capabilities: Execute(tool://*) · Write/Read(mem)\n",
         agent.id()
     );
 
-    // web_search(需 TAVILY_API_KEY)
+    // web_search (requires TAVILY_API_KEY)
     if has_search {
         let q = "THALIOX AI-native operating system";
         match agent
@@ -94,8 +95,8 @@ async fn main() {
                 for line in out.lines().take(8) {
                     println!("    {line}");
                 }
-                println!("  (余 {})", agent.remaining_budget());
-                // 把搜索结果写进记忆
+                println!("  (remaining {})", agent.remaining_budget());
+                // Write the search results into memory
                 let obj = SemanticObject {
                     id: "search/thaliox".into(),
                     vector: vec![0.1, 0.2, 0.3],
@@ -109,16 +110,19 @@ async fn main() {
                         cost: 5,
                     })
                     .await;
-                println!("· remember 搜索结果 → 余 {}", agent.remaining_budget());
+                println!(
+                    "· remember search results → remaining {}",
+                    agent.remaining_budget()
+                );
             }
             Err(e) => println!("· web_search ✗ {e}"),
             _ => {}
         }
     } else {
-        println!("(无 TAVILY_API_KEY,跳过 web_search;设 TAVILY_API_KEY 启用)");
+        println!("(no TAVILY_API_KEY, skipping web_search; set TAVILY_API_KEY to enable)");
     }
 
-    // fetch(真实,无需 key)
+    // fetch (real, no key needed)
     let url = "https://example.com";
     match agent
         .act(Action::Invoke {
@@ -134,14 +138,14 @@ async fn main() {
                 .find(|l| l.contains("<title>"))
                 .unwrap_or("")
                 .trim();
-            println!("\n· fetch {url} → {} 字符  {title}", out.chars().count());
-            println!("  (余 {})", agent.remaining_budget());
+            println!("\n· fetch {url} → {} chars  {title}", out.chars().count());
+            println!("  (remaining {})", agent.remaining_budget());
         }
         Err(e) => println!("\n· fetch ✗ {e}"),
         _ => {}
     }
 
-    // 检索回刚才写入的搜索结果
+    // Retrieve the search results just written
     if has_search
         && let Ok(Outcome::Recalled(hits)) = agent
             .act(Action::Recall {
@@ -153,13 +157,16 @@ async fn main() {
         && let Some(o) = hits.first()
     {
         println!(
-            "\n· recall → 召回 '{}' ({} 字节搜索结果)",
+            "\n· recall → recalled '{}' ({} bytes of search results)",
             o.id,
             o.data.len()
         );
     }
 
-    println!("\n审计 {} 条(全程 INV-1/2/4 门控):", agent.audit().len());
+    println!(
+        "\n{} audit records (fully gated by INV-1/2/4):",
+        agent.audit().len()
+    );
     for r in agent.audit() {
         let mark = if r.allowed { "✓" } else { "✗" };
         println!("  {mark} {:?} cost={} {}", r.op, r.cost, r.target);

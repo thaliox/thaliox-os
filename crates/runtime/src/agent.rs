@@ -762,7 +762,7 @@ mod tests {
                     arguments: r#"{"input":"hi"}"#.into(),
                 }],
             ),
-            Completion::text("最终答案", 10),
+            Completion::text("final answer", 10),
         ]);
         let mut a = Agent::new(
             AgentId::new("a1"),
@@ -775,7 +775,7 @@ mod tests {
         a.start().unwrap();
 
         let answer = a.run("use the echo tool", 5).await.unwrap();
-        assert_eq!(answer, "最终答案");
+        assert_eq!(answer, "final answer");
         // Audit: think → tool invoke → think.
         let ops: Vec<Operation> = a.audit().iter().map(|r| r.op).collect();
         assert_eq!(

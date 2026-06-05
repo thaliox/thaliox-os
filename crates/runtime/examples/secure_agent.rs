@@ -1,7 +1,8 @@
-//! # secure_agent — 能力签名校验(INV-2 / TAM §5.2)
+//! # secure_agent — capability signature verification (INV-2 / TAM §5.2)
 //!
-//! 同一份「权限 + 作用域」,只有**签发者真正签过名**的能力令牌才被 `act` 接受;
-//! 伪造签名的令牌即使 perm/scope 完全匹配也被拒。
+//! For the same "permission + scope", only a capability token that the
+//! **issuer actually signed** is accepted by `act`; a token with a forged
+//! signature is rejected even if its perm/scope match exactly.
 //!
 //! ```bash
 //! cargo run -p thaliox-runtime --example secure_agent
@@ -45,21 +46,21 @@ fn note() -> SemanticObject {
 
 #[tokio::main]
 async fn main() {
-    // 签发者私钥;验证器用同一密钥。
+    // Issuer's private key; the verifier uses the same key.
     let issuer = HmacSigner::new(b"thaliox-issuer-secret".to_vec());
     let verifier = Arc::new(HmacSigner::new(b"thaliox-issuer-secret".to_vec()));
 
-    // 合法:签发者对令牌规范化负载签名。
+    // Valid: the issuer signs the token's canonical payload.
     let valid = issuer.issue(cap("agent-x", Permission::Write, "mem://agent-x/*"));
-    // 伪造:相同 grant,但签名是攻击者瞎填的。
+    // Forged: the same grant, but the signature is something an attacker made up.
     let mut forged = cap("agent-x", Permission::Write, "mem://agent-x/*");
     forged.signature = [0x99; 32];
 
-    println!("→ THALIOX 能力签名校验(INV-2 / TAM §5.2)\n");
+    println!("→ THALIOX capability signature verification (INV-2 / TAM §5.2)\n");
 
     for (label, token) in [
-        ("伪造令牌(假签名)", forged),
-        ("合法令牌(签发者签发)", valid),
+        ("forged token (fake signature)", forged),
+        ("valid token (issuer-signed)", valid),
     ] {
         let mut a = Agent::new(
             AgentId::new("agent-x"),
@@ -77,12 +78,12 @@ async fn main() {
             })
             .await
         {
-            Ok(_) => println!("· {label:<24} → remember 通过 ✓"),
-            Err(e) => println!("· {label:<24} → 拒绝: {e}"),
+            Ok(_) => println!("· {label:<24} → remember passed ✓"),
+            Err(e) => println!("· {label:<24} → denied: {e}"),
         }
     }
 
     println!(
-        "\n✓ 权限+作用域完全相同,签名不对的能力令牌仍被 act 拒绝——\n  鉴权前先验真伪(INV-2),这正是 TAM §5.2 要修正的早期原型教训。"
+        "\n✓ Even with identical permission+scope, a capability token with a wrong signature is still rejected by act——\n  verify authenticity before authorization (INV-2); this is exactly the early-prototype lesson TAM §5.2 fixes."
     );
 }
