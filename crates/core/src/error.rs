@@ -28,4 +28,8 @@ pub enum TamError {
     /// A malformed argument.
     #[error("invalid argument: {0}")]
     Invalid(String),
+
+    /// A cognition / external provider failed (network, HTTP, or bad response).
+    #[error("provider error: {0}")]
+    Provider(String),
 }
