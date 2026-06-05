@@ -3,7 +3,7 @@
 //! Implements the two mandated rules from reviewing the earlier prototype:
 //!
 //! 1. **Scope enforcement** lives in `thaliox-core`
-//!    ([`CapabilityToken::authorizes`](thaliox_core::CapabilityToken::authorizes)).
+//!    ([`CapabilityToken::authorizes`]).
 //! 2. **Canonical, length-prefixed signing payloads** live here
 //!    ([`canonical_payload`]) — never delimiter-joined, so delimiter injection
 //!    cannot forge a colliding signature.

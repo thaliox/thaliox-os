@@ -1,8 +1,8 @@
 //! # THALIOX fabric (L3)
 //!
 //! agent↔agent communication, team orchestration, and CRDT state replication
-//! (MASTER_PLAN §2). Transport carries [`VectorMessage`](thaliox_core::VectorMessage)s
-//! (TAM §3): near-term over gRPC/QUIC, long-term the `vsend`/`vrecv` hardware
+//! (MASTER_PLAN §2). Transport carries [`VectorMessage`]s (TAM §3) near-term
+//! over gRPC/QUIC, long-term the `vsend`/`vrecv` hardware
 //! primitive. A **team** is a *holarchy* — agents that are whole yet compose
 //! into a larger whole.
 //!

@@ -10,9 +10,9 @@
 //! AI agents have three first-class primitives; lifting them to machine-level
 //! citizens simplifies the whole stack (scheduling, security, communication):
 //!
-//! 1. [`VectorMessage`](message::VectorMessage) — the unit of **meaning** exchanged between agents (not bytes).
-//! 2. [`AttentionBudget`](budget::AttentionBudget) — the unit of **scheduling & accounting** (tokens, not CPU time slices).
-//! 3. [`CapabilityToken`](capability::CapabilityToken) — the unit of **permission & trust** (not uid/gid).
+//! 1. [`VectorMessage`] — the unit of **meaning** exchanged between agents (not bytes).
+//! 2. [`AttentionBudget`] — the unit of **scheduling & accounting** (tokens, not CPU time slices).
+//! 3. [`CapabilityToken`] — the unit of **permission & trust** (not uid/gid).
 //!
 //! ## The five invariants (every implementation MUST satisfy)
 //!
@@ -24,7 +24,7 @@
 //! - **INV-3 (vector fidelity)** — a [`VectorMessage`] passes losslessly only between equal
 //!   [`ModelFingerprint`]s; otherwise translation is explicit and its loss is measurable.
 //!   Implicit lossy conversion is forbidden.
-//! - **INV-4 (auditable)** — every call emits an immutable [`AuditRecord`](call::AuditRecord)
+//! - **INV-4 (auditable)** — every call emits an immutable [`AuditRecord`]
 //!   (who · which capability · how much budget · acting on what).
 //! - **INV-5 (human as the floor)** — a single [`Permission::Sovereign`] capability, held only by
 //!   the human supervisory plane, can unconditionally suspend / snapshot / roll back / terminate

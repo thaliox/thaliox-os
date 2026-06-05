@@ -1,6 +1,6 @@
 //! # THALIOX memory (L1)
 //!
-//! The [`SemanticSpace`](thaliox_core::SemanticSpace) (TAM §6) plus the four
+//! The [`SemanticSpace`] (TAM §6) plus the four
 //! memory tiers: **working** (context / KV-cache), **episodic** (recent
 //! sessions, time-windowed), **semantic** (long-term knowledge, persistent
 //! vectors), **procedural** (skill / tool-use patterns).
