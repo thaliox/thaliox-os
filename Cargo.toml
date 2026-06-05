@@ -10,6 +10,7 @@ members = [
     "crates/fabric",
     "crates/cap",
     "crates/api",
+    "crates/tools",
 ]
 
 [workspace.package]
@@ -29,6 +30,7 @@ thaliox-cognition = { path = "crates/cognition" }
 thaliox-fabric = { path = "crates/fabric" }
 thaliox-cap = { path = "crates/cap" }
 thaliox-api = { path = "crates/api" }
+thaliox-tools = { path = "crates/tools" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

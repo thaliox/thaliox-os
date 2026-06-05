@@ -42,6 +42,7 @@ pub mod capability;
 pub mod error;
 pub mod message;
 pub mod space;
+pub mod tool;
 
 pub use agent::AgentId;
 pub use budget::{AttentionBudget, RefillPolicy};
@@ -53,3 +54,4 @@ pub use message::{
     VectorPayload,
 };
 pub use space::{SemanticObject, SemanticSpace};
+pub use tool::{Tool, ToolResult};

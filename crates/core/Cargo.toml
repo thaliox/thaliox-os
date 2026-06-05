@@ -10,3 +10,4 @@ description = "THALIOX core — the THALIOX Abstract Machine (TAM): vector messa
 [dependencies]
 serde.workspace = true
 thiserror.workspace = true
+async-trait.workspace = true
