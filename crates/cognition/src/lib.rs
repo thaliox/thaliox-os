@@ -8,6 +8,12 @@
 //! M1 status: the provider trait + a local [`MockProvider`] (the offline
 //! fallback stand-in); real remote / GGUF providers slot in behind the trait.
 
+pub mod anthropic;
+pub mod openai;
+
+pub use anthropic::AnthropicProvider;
+pub use openai::OpenAiProvider;
+
 use async_trait::async_trait;
 use thaliox_core::TamError;
 
