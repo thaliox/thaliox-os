@@ -1,0 +1,12 @@
+[package]
+name = "thaliox-runtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "THALIOX runtime (L2) — agent execution unit, lifecycle, attention-budget scheduling, checkpoints"
+
+[dependencies]
+thaliox-core.workspace = true
+serde.workspace = true

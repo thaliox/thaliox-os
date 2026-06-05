@@ -1,0 +1,12 @@
+[package]
+name = "thaliox-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "THALIOX core — the THALIOX Abstract Machine (TAM): vector messages, attention budgets, capability tokens"
+
+[dependencies]
+serde.workspace = true
+thiserror.workspace = true
