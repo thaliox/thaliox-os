@@ -1,0 +1,11 @@
+[package]
+name = "thaliox-cap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "THALIOX cap — capability issuing & verification: canonical length-prefixed signing, scope enforcement (TAM §5)"
+
+[dependencies]
+thaliox-core.workspace = true

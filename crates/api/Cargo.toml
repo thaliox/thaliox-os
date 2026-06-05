@@ -1,0 +1,11 @@
+[package]
+name = "thaliox-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "THALIOX api (L5) — the unified API gateway surface (axum/tonic) + multi-language SDK entry"
+
+[dependencies]
+thaliox-core.workspace = true

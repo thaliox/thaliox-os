@@ -1,0 +1,12 @@
+[package]
+name = "thaliox-fabric"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "THALIOX fabric (L3) — agent↔agent vector transport, team orchestration, CRDT state replication"
+
+[dependencies]
+thaliox-core.workspace = true
+async-trait.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "thaliox-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "THALIOX memory (L1) — the SemanticSpace and the four memory tiers (working / episodic / semantic / procedural)"
+
+[dependencies]
+thaliox-core.workspace = true
+parking_lot = "0.12"

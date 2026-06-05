@@ -1,0 +1,37 @@
+# THALIOX — an operating system for AI, by AI.
+# Built top-down from the THALIOX Abstract Machine (TAM, docs/rfcs/0001).
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/runtime",
+    "crates/memory",
+    "crates/cognition",
+    "crates/fabric",
+    "crates/cap",
+    "crates/api",
+]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/thaliox/thaliox-os"
+homepage = "https://thaliox.com"
+authors = ["THALIOX"]
+
+[workspace.dependencies]
+# Internal crates (M1 skeleton: core / runtime / memory / cognition / fabric / cap / api)
+thaliox-core = { path = "crates/core" }
+thaliox-runtime = { path = "crates/runtime" }
+thaliox-memory = { path = "crates/memory" }
+thaliox-cognition = { path = "crates/cognition" }
+thaliox-fabric = { path = "crates/fabric" }
+thaliox-cap = { path = "crates/cap" }
+thaliox-api = { path = "crates/api" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }

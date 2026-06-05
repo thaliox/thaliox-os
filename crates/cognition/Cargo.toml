@@ -1,0 +1,12 @@
+[package]
+name = "thaliox-cognition"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "THALIOX cognition (L1) — unified LLM interface: remote backends + local quantized models (offline)"
+
+[dependencies]
+thaliox-core.workspace = true
+async-trait.workspace = true
