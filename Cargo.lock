@@ -911,6 +911,7 @@ dependencies = [
 name = "thaliox-runtime"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
  "serde",
  "thaliox-cognition",
  "thaliox-core",

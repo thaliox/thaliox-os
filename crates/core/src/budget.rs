@@ -57,6 +57,19 @@ impl AttentionBudget {
         self.spent += cost;
         Ok(())
     }
+
+    /// **INV-1 reconciliation** — settle a prior [`charge`](Self::charge)d
+    /// reservation against the *actual* cost once it is known (e.g. a real
+    /// completion's token usage). If `actual` exceeds the reservation the
+    /// surplus is recorded — the tokens were genuinely spent, so the balance may
+    /// reach zero or overdraw; if it is less, the difference is refunded.
+    pub fn settle(&mut self, reserved: u64, actual: u64) {
+        if actual >= reserved {
+            self.spent = self.spent.saturating_add(actual - reserved);
+        } else {
+            self.spent = self.spent.saturating_sub(reserved - actual);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -75,5 +88,20 @@ mod tests {
             Err(TamError::BudgetExceeded { need: 50, have: 40 })
         ));
         assert_eq!(b.remaining(), 40);
+    }
+
+    #[test]
+    fn settle_reconciles_to_actual() {
+        // Reserve 30, actual 45 → really spend 45 (overshoot recorded).
+        let mut over = AttentionBudget::new(100, 10);
+        over.charge(30).unwrap();
+        over.settle(30, 45);
+        assert_eq!(over.remaining(), 55);
+
+        // Reserve 30, actual 10 → refund the 20 surplus.
+        let mut under = AttentionBudget::new(100, 10);
+        under.charge(30).unwrap();
+        under.settle(30, 10);
+        assert_eq!(under.remaining(), 90);
     }
 }
