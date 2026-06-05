@@ -209,7 +209,7 @@ Groq(确定性数据流)· Cerebras(晶圆级)· Tenstorrent(RISC-V + AI)· Etch
 
 | 地平线 | 里程碑 | 交付物 | 证明什么 / 解锁什么资本 |
 |---|---|---|---|
-| **H1 软件层 (跑在 Linux)** | M1 单机 MVP | Rust daemon + LLM(远程+本地) + 向量记忆 + 工具 + 统一 API + 单客户端 | 编程模型成立;有可用产品 → 种子轮/社区 |
+| **H1 软件层 (跑在 Linux)** | ✅ M1 单机 MVP | Rust daemon + LLM(远程+本地) + 向量记忆 + 工具 + 统一 API + 单客户端 | 编程模型成立;有可用产品 → 种子轮/社区 — **已交付 `v0.1.0` (2026-06-05),见 [M1-MILESTONE](M1-MILESTONE.md)** |
 | | M2 microVM 化 | 一键部署 + 快照/恢复 + 自更新回滚 | 兑现 F2/F3 |
 | | M3 多实例 HA | 热迁移 + CRDT 合并 + 自愈接管 | 兑现 F4 |
 | | M4 集群 + 多端 | agent↔agent + 团队编排 + 多端客户端 | 兑现 F7/F8 → A 轮 |
