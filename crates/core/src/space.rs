@@ -24,7 +24,7 @@ pub struct SemanticObject {
 /// The contract for a semantic memory: objects are written and recalled by
 /// meaning. Concrete stores (in-memory, Qdrant, near-memory silicon) live in
 /// `thaliox-memory`; this is the TAM-level interface.
-pub trait SemanticSpace {
+pub trait SemanticSpace: Send + Sync {
     /// Store (or replace) an object.
     fn put(&self, obj: SemanticObject) -> Result<(), TamError>;
 

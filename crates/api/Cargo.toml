@@ -5,7 +5,19 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "THALIOX api (L5) — the unified API gateway surface (axum/tonic) + multi-language SDK entry"
+description = "THALIOX api (L5) — the unified HTTP gateway (axum) over the agent runtime"
 
 [dependencies]
 thaliox-core.workspace = true
+thaliox-runtime.workspace = true
+thaliox-cognition.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+axum = "0.8"
+
+[dev-dependencies]
+thaliox-memory.workspace = true
+thaliox-tools.workspace = true
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
