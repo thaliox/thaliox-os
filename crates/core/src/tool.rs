@@ -23,6 +23,12 @@ pub trait Tool: Send + Sync {
     /// The tool name — used for scope matching, e.g. `"web_search"`.
     fn name(&self) -> &str;
 
+    /// A natural-language description shown to the model when this tool is
+    /// advertised for tool-calling. Empty by default.
+    fn description(&self) -> &str {
+        ""
+    }
+
     /// Execute the tool with `input` (a query, a URL, …).
     async fn invoke(&self, input: &str) -> Result<ToolResult, TamError>;
 }
