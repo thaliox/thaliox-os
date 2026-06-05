@@ -47,7 +47,7 @@ pub mod tool;
 pub use agent::AgentId;
 pub use budget::{AttentionBudget, RefillPolicy};
 pub use call::{AuditRecord, Operation};
-pub use capability::{CapabilityToken, Permission, ResourceKind, Scope};
+pub use capability::{CapabilityToken, CapabilityVerifier, Permission, ResourceKind, Scope};
 pub use error::TamError;
 pub use message::{
     Dtype, IntentGroup, IntentVector, MessageKind, ModelFingerprint, Recipient, VectorMessage,
