@@ -9,3 +9,5 @@ description = "THALIOX cap — capability issuing & verification: canonical leng
 
 [dependencies]
 thaliox-core.workspace = true
+hmac.workspace = true
+sha2.workspace = true

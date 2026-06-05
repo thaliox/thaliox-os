@@ -11,7 +11,11 @@
 //! M1 status: skeleton — canonical encoder + Issuer/Verifier contracts. The
 //! concrete HMAC-SHA256 signer lands next.
 
-use thaliox_core::CapabilityToken;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
+use thaliox_core::{CapabilityToken, CapabilityVerifier};
+
+type HmacSha256 = Hmac<Sha256>;
 
 /// Append `bytes` with a 4-byte little-endian length prefix.
 fn push_lp(buf: &mut Vec<u8>, bytes: &[u8]) {
@@ -62,6 +66,57 @@ pub fn verify_token<V: Verifier>(v: &V, tok: &CapabilityToken) -> bool {
     v.verify_signature(&canonical_payload(tok), &tok.signature)
 }
 
+/// HMAC-SHA256 issuer/verifier — the H1 (software) realization of TAM §5. The
+/// key is the issuer's secret; in H3 it becomes a hardware key (CHERI-style).
+pub struct HmacSigner {
+    key: Vec<u8>,
+}
+
+impl HmacSigner {
+    /// Build from a secret key (any length).
+    pub fn new(key: impl Into<Vec<u8>>) -> Self {
+        Self { key: key.into() }
+    }
+
+    /// Sign a token's canonical payload, returning a copy with `signature` set.
+    pub fn issue(&self, mut token: CapabilityToken) -> CapabilityToken {
+        token.signature = self.sign(&canonical_payload(&token));
+        token
+    }
+}
+
+impl Issuer for HmacSigner {
+    fn sign(&self, payload: &[u8]) -> [u8; 32] {
+        let mut mac =
+            HmacSha256::new_from_slice(&self.key).expect("HMAC accepts a key of any length");
+        mac.update(payload);
+        let bytes = mac.finalize().into_bytes();
+        let mut sig = [0u8; 32];
+        sig.copy_from_slice(&bytes);
+        sig
+    }
+}
+
+impl Verifier for HmacSigner {
+    fn verify_signature(&self, payload: &[u8], sig: &[u8; 32]) -> bool {
+        let mut mac =
+            HmacSha256::new_from_slice(&self.key).expect("HMAC accepts a key of any length");
+        mac.update(payload);
+        mac.verify_slice(sig).is_ok() // constant-time compare
+    }
+}
+
+impl CapabilityVerifier for HmacSigner {
+    /// **INV-2**: valid iff not expired AND the signature over the canonical
+    /// payload checks out.
+    fn verify(&self, token: &CapabilityToken, now_secs: u64) -> bool {
+        if token.expires_at != 0 && token.expires_at <= now_secs {
+            return false;
+        }
+        self.verify_signature(&canonical_payload(token), &token.signature)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +145,32 @@ mod tests {
         let a = token("ab", "c");
         let b = token("a", "bc");
         assert_ne!(canonical_payload(&a), canonical_payload(&b));
+    }
+
+    #[test]
+    fn hmac_sign_verify_and_detect_tampering() {
+        let signer = HmacSigner::new(b"secret".to_vec());
+        let tok = signer.issue(token("a1", "mem://a1/*"));
+        assert!(verify_token(&signer, &tok));
+        assert!(signer.verify(&tok, 0));
+
+        // Tamper with the scope → signature no longer matches.
+        let mut tampered = tok.clone();
+        tampered.scope[0].pattern = "mem://other/*".into();
+        assert!(!verify_token(&signer, &tampered));
+
+        // A different key rejects it.
+        assert!(!HmacSigner::new(b"wrong".to_vec()).verify(&tok, 0));
+    }
+
+    #[test]
+    fn expired_token_is_rejected() {
+        let signer = HmacSigner::new(b"secret".to_vec());
+        let mut t = token("a1", "mem://a1/*");
+        t.expires_at = 100;
+        let tok = signer.issue(t);
+        assert!(signer.verify(&tok, 50)); // before expiry
+        assert!(!signer.verify(&tok, 100)); // at expiry
+        assert!(!signer.verify(&tok, 200)); // after expiry
     }
 }

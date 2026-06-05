@@ -100,6 +100,18 @@ impl CapabilityToken {
     }
 }
 
+/// Verifies a capability token's **authenticity** (signature) and **validity**
+/// (expiry). The concrete HMAC-SHA256 verifier lives in `thaliox-cap`.
+///
+/// INV-2's *full* check is `verify(token, now)` **and** `token.authorizes(...)`:
+/// an unauthentic or expired token must be rejected before its scope is even
+/// considered.
+pub trait CapabilityVerifier: Send + Sync {
+    /// Whether `token` is authentic and not expired at `now_secs`
+    /// (`expires_at == 0` means never expires).
+    fn verify(&self, token: &CapabilityToken, now_secs: u64) -> bool;
+}
+
 /// Minimal wildcard matcher: `*` matches any (possibly empty) run of characters.
 /// A full path-glob matcher arrives with the `thaliox-cap` implementation; this
 /// is the contract's reference semantics.

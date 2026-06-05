@@ -9,9 +9,11 @@
 //! 3. act on state (cognition / memory);
 //! 4. **INV-4** — emit an [`AuditRecord`].
 //!
-//! M1 scope: capability check is permission + scope (INV-2 rule 1). Signature
-//! verification (via `thaliox-cap`) and expiry are assumed done at grant time;
-//! wiring them into `act` is the next step.
+//! INV-2 in full: when a [`CapabilityVerifier`] is configured
+//! (see [`with_verifier`](Agent::with_verifier)), each candidate
+//! capability is checked for an **authentic signature** and a **live expiry**
+//! *before* its permission + scope. Without one, capabilities are trusted as
+//! granted (the M1 default).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,8 +21,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use thaliox_cognition::{Completion, LlmProvider, Message};
 use thaliox_core::{
-    AgentId, AttentionBudget, AuditRecord, CapabilityToken, Operation, ResourceKind,
-    SemanticObject, SemanticSpace, TamError, Tool,
+    AgentId, AttentionBudget, AuditRecord, CapabilityToken, CapabilityVerifier, Operation,
+    ResourceKind, SemanticObject, SemanticSpace, TamError, Tool,
 };
 
 use crate::Phase;
@@ -100,6 +102,7 @@ pub struct Agent {
     memory: Arc<dyn SemanticSpace>,
     mind: Arc<dyn LlmProvider>,
     tools: HashMap<String, Arc<dyn Tool>>,
+    verifier: Option<Arc<dyn CapabilityVerifier>>,
     phase: Phase,
     audit: Vec<AuditRecord>,
 }
@@ -119,6 +122,7 @@ impl Agent {
             memory,
             mind,
             tools: HashMap::new(),
+            verifier: None,
             phase: Phase::Born,
             audit: Vec::new(),
         }
@@ -133,6 +137,13 @@ impl Agent {
     /// Register a tool the agent may invoke (keyed by [`Tool::name`]).
     pub fn with_tool(mut self, tool: Arc<dyn Tool>) -> Self {
         self.tools.insert(tool.name().to_string(), tool);
+        self
+    }
+
+    /// Verify capability **signatures and expiry** on every `act` (INV-2).
+    /// Without a verifier, capabilities are trusted as granted (the M1 default).
+    pub fn with_verifier(mut self, verifier: Arc<dyn CapabilityVerifier>) -> Self {
+        self.verifier = Some(verifier);
         self
     }
 
@@ -194,10 +205,15 @@ impl Agent {
         let resource = action.resource();
         let target = self.target_of(&action);
         let now = now_millis();
+        let now_secs = now / 1000;
 
-        // INV-2: capability — permission AND scope (skipped for budget-only ops).
+        // INV-2: a usable capability must be **authentic** (signature + unexpired,
+        // when a verifier is configured) AND grant the permission over the target.
         if let Some(p) = perm {
-            let authorized = self.caps.iter().any(|c| c.authorizes(p, resource, &target));
+            let authorized = self.caps.iter().any(|c| {
+                self.verifier.as_ref().is_none_or(|v| v.verify(c, now_secs))
+                    && c.authorizes(p, resource, &target)
+            });
             if !authorized {
                 self.record(op, perm, 0, &target, now, false);
                 return Err(TamError::CapabilityDenied(format!("{p:?} on {target}")));
@@ -576,5 +592,52 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, TamError::NotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn forged_capability_rejected_when_verifying() {
+        use thaliox_cap::HmacSigner;
+        let signer = Arc::new(HmacSigner::new(b"issuer-key".to_vec()));
+
+        // A forged token: right permission + scope, but a bogus signature.
+        let forged = cap("a1", Permission::Write, "mem://a1/*");
+        let mut a = Agent::new(
+            AgentId::new("a1"),
+            AttentionBudget::new(100, 1000),
+            Arc::new(InMemorySpace::new()),
+            Arc::new(MockProvider::new("ok", 5)),
+        )
+        .with_verifier(signer.clone())
+        .grant(forged);
+        a.start().unwrap();
+        let err = a
+            .act(Action::Remember {
+                object: obj("n1", vec![1.0, 0.0]),
+                cost: 3,
+            })
+            .await
+            .unwrap_err();
+        // Rejected despite matching permission + scope — the signature fails.
+        assert!(matches!(err, TamError::CapabilityDenied(_)));
+
+        // A properly issued token with the same grant is accepted.
+        let good = signer.issue(cap("a1", Permission::Write, "mem://a1/*"));
+        let mut a2 = Agent::new(
+            AgentId::new("a1"),
+            AttentionBudget::new(100, 1000),
+            Arc::new(InMemorySpace::new()),
+            Arc::new(MockProvider::new("ok", 5)),
+        )
+        .with_verifier(signer)
+        .grant(good);
+        a2.start().unwrap();
+        assert!(
+            a2.act(Action::Remember {
+                object: obj("n1", vec![1.0, 0.0]),
+                cost: 3,
+            })
+            .await
+            .is_ok()
+        );
     }
 }
