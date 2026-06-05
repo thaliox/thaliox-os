@@ -15,7 +15,7 @@ To apply for **developer access**, add yourself here in a PR — see
 
 | Name / handle | Area | Notes |
 |---|---|---|
-| 天枢 (Tianshu) | AI pair-developer — core · runtime · cognition · web | AI co-developer (Claude) building THALIOX alongside the maintainer |
+| 天枢 (Tianshu) | AI pair-developer — core · runtime · cognition · web | AI co-developer building THALIOX alongside the maintainer |
 
 <!--
 Add a row with: name/handle · area you help own · link to a merged PR.
