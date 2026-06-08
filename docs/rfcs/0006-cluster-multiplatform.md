@@ -1,0 +1,151 @@
+# RFC-0006 — Cluster & multi-platform: agent↔agent, teams, distributed HA
+
+| | |
+|---|---|
+| **Status** | Draft |
+| **Author** | THALIOX core |
+| **Supersedes** | — |
+| **Depends on** | [RFC-0001 (TAM §3, §6)](0001-abstract-machine.md), [RFC-0005 (HA primitives)](0005-multi-instance-ha.md), [MASTER_PLAN.md](../MASTER_PLAN.md) |
+
+> **This RFC designs M4 — many agents collaborating across many hosts.** M1 made
+> one agent useful; M3 made an agent survivable but *single-host*. M4 builds the
+> **fabric** that carries [`VectorMessage`](0001-abstract-machine.md)s (TAM §3)
+> between agents and across nodes, turning M3's in-process HA primitives
+> (`Node` / `migrate` / `Supervisor`) into a real distributed cluster, adding
+> **teams** (holarchies) and **multi-platform clients**. Delivers F7/F8 → Series A.
+
+---
+
+## 1. Motivation
+
+The differentiating moat is not a lone agent — it is **a fleet of agents that
+communicate in vectors, organize into teams, survive node loss, and are reachable
+from many clients.** M4 is the rung where THALIOX stops being a single-agent
+runtime and becomes an *operating system for a society of agents*.
+
+Two things already exist as skeletons since M1: the `fabric` crate (`Transport`
+trait + `Team` + `Paradigm`) and `core`'s `VectorMessage`. M3 left two threads
+explicitly for here: cross-host heartbeat/registry transport (RFC-0005 OQ4) and
+cross-host migration consistency (OQ5). M4 picks them all up.
+
+---
+
+## 2. The fabric: VectorMessage transport (TAM §3)
+
+`Transport` carries `VectorMessage`s — the unit in which agents exchange *meaning*,
+not bytes (TAM §3). M4 gives the skeleton trait real implementations:
+
+- **In-process** (M4a) — channels between agents on one node. CI-testable.
+- **Networked** (M4b) — TCP/QUIC between nodes; serialized `VectorMessage`. The
+  H2/H3 path is kernel-bypass / the `vsend`/`vrecv` silicon primitive.
+
+**INV-3 (vector fidelity) is the fabric's law:** same `ModelFingerprint` ⇒ the
+payload is delivered losslessly and MAY be injected directly into the receiver's
+model; different fingerprint ⇒ it MUST pass an explicit translation with a
+measurable loss metric — never an implicit lossy conversion. The fabric enforces
+this at the boundary, not the agent.
+
+Every cross-agent message is **capability-gated** (INV-2): a `VectorMessage`
+carries an optional `CapabilityToken`; `Communicate` permission over the target
+is required, exactly as `act` gates memory/tools.
+
+---
+
+## 3. From single-host HA to a distributed cluster
+
+M3's `Supervisor` and `migrate` are correct but in-process. M4b runs them over the
+networked `Transport`:
+
+- **Distributed registry & heartbeat** — the supervisor's `observe`/`heartbeat`/
+  `tick` flow over the fabric: nodes report liveness and ship their latest
+  `Checkpoint` to the supervisor (or to peers) as control `VectorMessage`s.
+- **Cross-host migration** — `migrate`'s `Package` bytes cross the network instead
+  of a function call; the receiving node `LocalDeploy`s (or `FirecrackerDeploy`s)
+  it. The flow is unchanged — only the transport differs. *(Already proven across
+  two real microVMs on one host via vsock, RFC-0005 §7 M3b; M4b extends the bytes
+  over the network between hosts.)*
+- **Self-healing across hosts** — the same migration triggered by a missed
+  heartbeat, fenced by a supervisor epoch/capability (RFC-0005 OQ1).
+
+This is where the KVM bare-metal earns its keep: **the cross-host HA validation
+lands in M4b.**
+
+---
+
+## 4. Teams — a holarchy of agents
+
+A `Team` is a *holarchy* (agents whole in themselves, composing into a larger
+whole) executing a `Paradigm`:
+
+| Paradigm | Coordination |
+|---|---|
+| **Hierarchy** | a lead agent delegates sub-goals; children report up |
+| **Market** | agents bid on tasks; an auctioneer assigns by cost/fit |
+| **Pipeline** | each agent transforms and forwards a `VectorMessage` to the next |
+| **Swarm** | peers broadcast to an intent group; emergent consensus |
+
+M4c implements team execution: spawn members, route `VectorMessage`s per the
+paradigm, aggregate results. Pipeline is the simplest to land first (a chain of
+agents over the fabric) and is CI-testable in-process.
+
+---
+
+## 5. Multi-platform clients (F8)
+
+M1's `api` (axum HTTP gateway) is one client surface. M4d generalizes it so the
+same agent fleet is reachable from multiple clients (HTTP/JSON for web & tools,
+a streaming channel for live vector I/O, later native/SDK clients), all speaking
+to the cluster through one authorization model (capabilities, INV-2). The gateway
+becomes the cluster's front door, not a single agent's.
+
+---
+
+## 6. Mapping to TAM & milestones
+
+| Concept | M4 realization |
+|---|---|
+| **VectorMessage** (TAM §3) | the `Transport` payload; INV-3 fidelity enforced at the fabric boundary |
+| `vsend` / `vrecv` (TAM §3 / H3) | `Transport::send`/`recv` today; the silicon vector-transport NIC later |
+| Cluster / Checkpoint (TAM §6) | distributed `Supervisor` + cross-host `migrate` (RFC-0005 over the fabric) |
+| Capability (INV-2) | every cross-agent message is `Communicate`-gated |
+| Teams (MASTER_PLAN §2.4) | `Team` + `Paradigm` execution |
+
+---
+
+## 7. Staged plan
+
+| Stage | Deliverable | CI-gated? |
+|---|---|---|
+| **M4a** | agent↔agent over an **in-process** `Transport` (a real `fabric::Transport` impl): two agents exchange `VectorMessage`s, INV-3 + INV-2 enforced | ✅ pure software |
+| **M4b** | **networked** `Transport` (TCP) + distributed `Supervisor`/`migrate`: cross-host heartbeat, registry, migration, self-healing. **Cross-host HA validated on the KVM host.** | ✅ in-process tests; self-hosted multi-host |
+| **M4c** | **teams**: `Team` execution for the Pipeline paradigm first, then Hierarchy/Market/Swarm | ✅ in-process |
+| **M4d** | **multi-platform clients**: generalize the `api` gateway as the cluster front door | ✅ in-process |
+
+Start at **M4a** — the fabric transport is the foundation everything else (cluster,
+teams, clients) rides on, and it is self-contained and CI-testable.
+
+---
+
+## 8. Open questions
+
+1. Wire format for `VectorMessage` over the network — length-prefixed serde (reuse
+   the `vmproto` framing from RFC-0004), or protobuf/gRPC for cross-language clients?
+2. Vector translation (different `ModelFingerprint`) — where does the translation
+   layer live (fabric boundary), and what is the canonical loss metric (cosine drift
+   vs downstream-task fidelity, RFC-0001 OQ2)?
+3. Membership & discovery — static node list for M4b, or gossip/SWIM for self-forming
+   clusters?
+4. Fencing for distributed self-healing — supervisor epoch in the registry, or a
+   revoked `CapabilityToken` on the fenced instance (the TAM-native route, OQ1)?
+5. Backpressure & ordering for streaming `VectorMessage` chunks (the `seq` field).
+
+---
+
+## 9. Conclusion
+
+M4 turns THALIOX from a runtime for one survivable agent into an **operating system
+for a distributed society of agents**: a fabric that carries meaning as vectors, a
+cluster that keeps the fleet alive across hosts (cashing in M3's HA over the
+network), teams that organize the agents, and a gateway that opens them to many
+clients. It is built bottom-up — the fabric transport (M4a) first, everything else
+on top — and it is where M3's HA finally runs cross-host (M4b, on real hardware).
