@@ -15,6 +15,10 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use thaliox_core::{CapabilityToken, CapabilityVerifier};
 
+/// RFC-0003 §5 falsification gate for the MELD capability pillar
+/// (E3 capability-addressed memory).
+pub mod experiment;
+
 type HmacSha256 = Hmac<Sha256>;
 
 /// Append `bytes` with a 4-byte little-endian length prefix.
