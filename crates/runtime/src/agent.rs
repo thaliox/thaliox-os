@@ -121,6 +121,28 @@ struct AgentState {
     audit: Vec<AuditRecord>,
 }
 
+/// Total, fixed order over lifecycle phases so the phase merge is a deterministic
+/// join (commutative/associative/idempotent). Terminal `Dead` absorbs (RFC-0005 §4).
+fn phase_rank(p: Phase) -> u8 {
+    match p {
+        Phase::Born => 0,
+        Phase::Live => 1,
+        Phase::Forking => 2,
+        Phase::Merging => 3,
+        Phase::Migrating => 4,
+        Phase::Healing => 5,
+        Phase::Dead => 6,
+    }
+}
+
+/// Deterministic identity of an audit record, for the grow-only-set union.
+fn audit_key(r: &AuditRecord) -> String {
+    format!(
+        "{}|{:?}|{}|{}|{}",
+        r.agent.0, r.op, r.at, r.target, r.allowed
+    )
+}
+
 impl CognitiveState for AgentState {
     fn serialize(&self) -> Vec<u8> {
         serde_json::to_vec(self).expect("AgentState is always serializable")
@@ -129,7 +151,74 @@ impl CognitiveState for AgentState {
         serde_json::from_slice(blob)
             .map_err(|e| thaliox_cognition::StateError::Decode(e.to_string()))
     }
-    // `merge` stays the contract default (Unsupported) — M3 / RFC-0003 pillar 2.
+
+    /// Conflict-free merge of two diverged agent states (M3 / RFC-0005 §4): a
+    /// per-field CRDT — audit grow-only set, caps G-Set, `spent` join (max),
+    /// phase lattice join — all deterministically ordered, so the result is
+    /// commutative, associative, and idempotent (the laws E1 validated).
+    fn merge(&self, other: &Self) -> Result<Self, thaliox_cognition::StateError> {
+        // budget: config from self; `spent` is a join (max) — never under-count.
+        let budget = AttentionBudget {
+            total: self.budget.total,
+            spent: self.budget.spent.max(other.budget.spent),
+            rate: self.budget.rate,
+            refill: self.budget.refill.clone(),
+        };
+
+        // caps: G-Set union by `jti`, sorted for determinism.
+        let mut caps = self.caps.clone();
+        let seen: std::collections::HashSet<[u8; 16]> = caps.iter().map(|c| c.jti).collect();
+        for c in &other.caps {
+            if !seen.contains(&c.jti) {
+                caps.push(c.clone());
+            }
+        }
+        caps.sort_by_key(|c| c.jti);
+
+        // audit: grow-only set union by record identity, totally ordered.
+        let mut audit = self.audit.clone();
+        let seen_audit: std::collections::HashSet<String> = audit.iter().map(audit_key).collect();
+        for r in &other.audit {
+            if !seen_audit.contains(&audit_key(r)) {
+                audit.push(r.clone());
+            }
+        }
+        audit.sort_by(|a, b| {
+            a.at.cmp(&b.at)
+                .then_with(|| audit_key(a).cmp(&audit_key(b)))
+        });
+
+        // phase: join over the fixed total order (Dead absorbs).
+        let phase = if phase_rank(self.phase) >= phase_rank(other.phase) {
+            self.phase
+        } else {
+            other.phase
+        };
+
+        Ok(Self {
+            budget,
+            caps,
+            phase,
+            audit,
+        })
+    }
+}
+
+impl Checkpoint {
+    /// Merge two checkpoints of the same agent into one (M3 / RFC-0005 §4) via the
+    /// per-field CRDT — the basis of CRDT merge and self-healing reconciliation.
+    /// Conflict-free, so the order of merges does not matter.
+    pub fn merge(&self, other: &Checkpoint) -> Result<Checkpoint, TamError> {
+        let to_err = |e: thaliox_cognition::StateError| TamError::Invalid(format!("merge: {e}"));
+        let a = AgentState::restore(&self.state).map_err(to_err)?;
+        let b = AgentState::restore(&other.state).map_err(to_err)?;
+        let merged = CognitiveState::merge(&a, &b).map_err(to_err)?;
+        Ok(Checkpoint {
+            agent: self.agent.clone(),
+            budget: merged.budget.clone(),
+            state: CognitiveState::serialize(&merged),
+        })
+    }
 }
 
 impl Agent {
@@ -518,6 +607,110 @@ mod tests {
         }
         a.start().unwrap();
         a
+    }
+
+    fn cap_jti(n: u8) -> CapabilityToken {
+        CapabilityToken {
+            subject: AgentId::new("a1"),
+            permissions: vec![Permission::Read],
+            scope: vec![Scope {
+                resource: ResourceKind::Memory,
+                pattern: "mem://a1/*".into(),
+            }],
+            issued_at: 0,
+            expires_at: 0,
+            jti: [n; 16],
+            delegable: false,
+            signature: [0; 32],
+        }
+    }
+
+    fn mk_audit(at: u64, target: &str) -> AuditRecord {
+        AuditRecord {
+            agent: AgentId::new("a1"),
+            op: Operation::Think,
+            permission_used: None,
+            cost: 1,
+            target: target.into(),
+            at,
+            allowed: true,
+        }
+    }
+
+    fn mk_state(spent: u64, caps: Vec<CapabilityToken>, audit: Vec<AuditRecord>) -> AgentState {
+        let mut budget = AttentionBudget::new(100, 1000);
+        budget.spent = spent;
+        AgentState {
+            budget,
+            caps,
+            phase: Phase::Live,
+            audit,
+        }
+    }
+
+    #[test]
+    fn merge_is_useful_no_record_lost() {
+        let a = mk_state(
+            5,
+            vec![cap_jti(1)],
+            vec![mk_audit(10, "x"), mk_audit(20, "y")],
+        );
+        let b = mk_state(
+            8,
+            vec![cap_jti(2)],
+            vec![mk_audit(20, "y"), mk_audit(30, "z")],
+        );
+        let m = a.merge(&b).unwrap();
+        assert_eq!(m.budget.spent, 8); // join (max), never under-counts spend
+        assert_eq!(m.caps.len(), 2); // union by jti
+        assert_eq!(m.audit.len(), 3); // x, y (the @20 dup is deduped), z — nothing lost
+    }
+
+    #[test]
+    fn merge_is_a_lawful_crdt() {
+        let blob = |s: &AgentState| CognitiveState::serialize(s);
+        let a = mk_state(
+            5,
+            vec![cap_jti(1)],
+            vec![mk_audit(10, "x"), mk_audit(20, "y")],
+        );
+        let b = mk_state(
+            8,
+            vec![cap_jti(2)],
+            vec![mk_audit(20, "y"), mk_audit(30, "z")],
+        );
+        let c = mk_state(3, vec![cap_jti(1), cap_jti(3)], vec![mk_audit(15, "w")]);
+
+        // commutative
+        assert_eq!(blob(&a.merge(&b).unwrap()), blob(&b.merge(&a).unwrap()));
+        // idempotent
+        assert_eq!(blob(&a.merge(&a).unwrap()), blob(&a));
+        // associative
+        let left = a.merge(&b).unwrap().merge(&c).unwrap();
+        let right = a.merge(&b.merge(&c).unwrap()).unwrap();
+        assert_eq!(blob(&left), blob(&right));
+    }
+
+    #[test]
+    fn checkpoint_merge_reconciles_two_agents() {
+        let s1 = mk_state(5, vec![cap_jti(1)], vec![mk_audit(10, "x")]);
+        let s2 = mk_state(9, vec![cap_jti(2)], vec![mk_audit(20, "y")]);
+        let cp = |s: &AgentState| Checkpoint {
+            agent: AgentId::new("a1"),
+            budget: s.budget.clone(),
+            state: CognitiveState::serialize(s),
+        };
+        let merged = cp(&s1).merge(&cp(&s2)).unwrap();
+        assert_eq!(merged.budget.spent, 9);
+        // The merged checkpoint restores into a usable agent on a fresh node.
+        let agent = Agent::restore(
+            &merged,
+            Arc::new(InMemorySpace::new()),
+            Arc::new(MockProvider::new("ok", 5)),
+        )
+        .unwrap();
+        assert_eq!(agent.audit().len(), 2); // both agents' audit preserved
+        assert_eq!(agent.remaining_budget(), 91); // 100 - max(5,9)
     }
 
     #[tokio::test]
