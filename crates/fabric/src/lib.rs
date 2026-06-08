@@ -16,8 +16,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use thaliox_core::{
-    AgentId, ModelFingerprint, Permission, Recipient, ResourceKind, TamError, VectorMessage,
-    VectorPayload,
+    AgentId, CapabilityToken, MessageKind, ModelFingerprint, Permission, Recipient, ResourceKind,
+    TamError, VectorMessage, VectorPayload,
 };
 use thaliox_runtime::{
     Checkpoint, DeployEnv, DeployTarget, LocalDeploy, Node, NodeId, Package, Supervisor,
@@ -467,6 +467,155 @@ pub async fn serve_supervisor(
     Ok(bound)
 }
 
+// ---------- M4c: team execution — the Pipeline paradigm (RFC-0006 §4) ----------
+
+/// One stage of a [`Pipeline`]: the per-message behavior of the agent at this
+/// position. `process` stands in for the agent's model forward-pass — it maps an
+/// inbound [`VectorMessage`] to the [`VectorPayload`] this agent forwards on.
+/// (A real model call when cognition lands; today a pure transform so the team
+/// orchestration is CI-testable without the full mind.)
+#[async_trait]
+pub trait Stage: Send + Sync {
+    /// The agent backing this stage (its team member id).
+    fn agent(&self) -> &AgentId;
+    /// Transform the inbound message into this agent's output payload.
+    async fn process(&self, msg: &VectorMessage) -> Result<VectorPayload, TamError>;
+}
+
+/// A [`Stage`] adapter over a plain synchronous transform — the common case and
+/// what tests use. Async stages (e.g. ones that call a model) implement [`Stage`]
+/// directly.
+pub struct MapStage<F> {
+    agent: AgentId,
+    f: F,
+}
+
+impl<F> MapStage<F>
+where
+    F: Fn(&VectorMessage) -> VectorPayload + Send + Sync,
+{
+    pub fn new(agent: AgentId, f: F) -> Self {
+        Self { agent, f }
+    }
+}
+
+#[async_trait]
+impl<F> Stage for MapStage<F>
+where
+    F: Fn(&VectorMessage) -> VectorPayload + Send + Sync,
+{
+    fn agent(&self) -> &AgentId {
+        &self.agent
+    }
+    async fn process(&self, msg: &VectorMessage) -> Result<VectorPayload, TamError> {
+        Ok((self.f)(msg))
+    }
+}
+
+struct PipeStage {
+    stage: Box<dyn Stage>,
+    endpoint: Endpoint,
+    /// Capability this stage uses to forward to the *next* stage (INV-2). The
+    /// final stage has none.
+    cap_to_next: Option<CapabilityToken>,
+}
+
+/// A team running the **Pipeline** paradigm: a chain of agents over the fabric,
+/// each transforming a [`VectorMessage`] and forwarding it to the next
+/// (RFC-0006 §4, the simplest paradigm to land first).
+///
+/// Execution threads the message through the members in order. **Every hop is a
+/// real capability-gated fabric `send`** — so INV-2 is enforced *between* team
+/// members, not just at the team boundary. **INV-3 is checked on entry to each
+/// stage**: a cross-`ModelFingerprint` aligned payload must be explicitly marked
+/// `Translate`, never implicitly injected.
+pub struct Pipeline {
+    name: String,
+    stages: Vec<PipeStage>,
+}
+
+impl Pipeline {
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            stages: Vec::new(),
+        }
+    }
+
+    /// Append a stage: the agent's behavior, its fabric [`Endpoint`], and the
+    /// capability it forwards to the next stage with (`None` for the last stage).
+    pub fn stage(
+        mut self,
+        stage: Box<dyn Stage>,
+        endpoint: Endpoint,
+        cap_to_next: Option<CapabilityToken>,
+    ) -> Self {
+        self.stages.push(PipeStage {
+            stage,
+            endpoint,
+            cap_to_next,
+        });
+        self
+    }
+
+    /// The declarative [`Team`] this pipeline realizes (members in stage order).
+    pub fn team(&self) -> Team {
+        Team {
+            name: self.name.clone(),
+            members: self
+                .stages
+                .iter()
+                .map(|s| s.stage.agent().clone())
+                .collect(),
+            paradigm: Paradigm::Pipeline,
+        }
+    }
+
+    /// Run `input` through the chain, returning the final stage's output message.
+    pub async fn run(&self, input: VectorMessage) -> Result<VectorMessage, TamError> {
+        if self.stages.is_empty() {
+            return Err(TamError::Invalid("empty pipeline".into()));
+        }
+        let mut current = input;
+        for i in 0..self.stages.len() {
+            let s = &self.stages[i];
+
+            // INV-3: forbid implicit cross-fingerprint injection at this stage.
+            if matches!(
+                fidelity(&current, s.endpoint.fingerprint()),
+                Fidelity::NeedsTranslation
+            ) && current.kind != MessageKind::Translate
+            {
+                return Err(TamError::Invalid(format!(
+                    "INV-3: stage {} would inject a cross-fingerprint payload without translation",
+                    s.endpoint.id()
+                )));
+            }
+
+            // The agent computes its output payload.
+            let payload = s.stage.process(&current).await?;
+            let mut out = current.clone();
+            out.from = s.endpoint.id().clone();
+            out.fingerprint = s.endpoint.fingerprint().clone();
+            out.payload = payload;
+            out.seq += 1;
+
+            // Last stage → the pipeline's result.
+            if i + 1 == self.stages.len() {
+                return Ok(out);
+            }
+
+            // Forward to the next stage over the fabric (INV-2 gated by `send`).
+            let next_id = self.stages[i + 1].endpoint.id().clone();
+            out.to = Recipient::Unicast(next_id);
+            out.capability = s.cap_to_next.clone();
+            self.stages[i].endpoint.send(out).await?;
+            current = self.stages[i + 1].endpoint.recv().await?;
+        }
+        unreachable!("returned at the last stage")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use thaliox_core::{CapabilityToken, Dtype, IntentGroup, MessageKind, Scope};
@@ -727,5 +876,93 @@ mod tests {
             assert!(s.tick().contains(&id));
         }
         assert_eq!(sup.lock().unwrap().health(&id), Some(Health::Suspected));
+    }
+
+    // ---------- M4c: Pipeline team execution ----------
+
+    /// A stage whose agent adds 1 to every byte of a `Dense` payload (a stand-in
+    /// transform). Lets a chain produce a verifiable end-to-end result.
+    fn add_one(id: &str) -> Box<dyn Stage> {
+        Box::new(MapStage::new(
+            AgentId::new(id),
+            |m: &VectorMessage| match &m.payload {
+                VectorPayload::Dense { dtype, dim, data } => VectorPayload::Dense {
+                    dtype: *dtype,
+                    dim: *dim,
+                    data: data.iter().map(|b| b.wrapping_add(1)).collect(),
+                },
+                other => other.clone(),
+            },
+        ))
+    }
+
+    #[tokio::test]
+    async fn pipeline_threads_and_transforms() {
+        let fab = LocalFabric::new();
+        let e1 = fab.endpoint(AgentId::new("s1"), fp("m1"));
+        let e2 = fab.endpoint(AgentId::new("s2"), fp("m1"));
+        let e3 = fab.endpoint(AgentId::new("s3"), fp("m1"));
+        let pipe = Pipeline::new("etl")
+            .stage(add_one("s1"), e1, Some(comm_cap("s1", "s2")))
+            .stage(add_one("s2"), e2, Some(comm_cap("s2", "s3")))
+            .stage(add_one("s3"), e3, None);
+
+        // Declarative team shape (members in stage order).
+        let team = pipe.team();
+        assert_eq!(team.paradigm, Paradigm::Pipeline);
+        assert_eq!(
+            team.members,
+            vec![AgentId::new("s1"), AgentId::new("s2"), AgentId::new("s3")]
+        );
+
+        let input = msg("client", Recipient::Unicast(AgentId::new("s1")), "m1", None);
+        let out = pipe.run(input).await.unwrap();
+
+        // The output came from the last stage and was transformed three times.
+        assert_eq!(out.from, AgentId::new("s3"));
+        match out.payload {
+            VectorPayload::Dense { data, .. } => assert!(data.iter().all(|&b| b == 3)),
+            _ => panic!("expected dense payload"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pipeline_hop_is_capability_gated() {
+        let fab = LocalFabric::new();
+        let e1 = fab.endpoint(AgentId::new("s1"), fp("m1"));
+        let e2 = fab.endpoint(AgentId::new("s2"), fp("m1"));
+        // s1's forwarding capability authorizes talking to "x", not "s2".
+        let pipe = Pipeline::new("p")
+            .stage(add_one("s1"), e1, Some(comm_cap("s1", "x")))
+            .stage(add_one("s2"), e2, None);
+
+        let r = pipe
+            .run(msg("c", Recipient::Unicast(AgentId::new("s1")), "m1", None))
+            .await;
+        assert!(matches!(r, Err(TamError::CapabilityDenied(_))));
+    }
+
+    #[tokio::test]
+    async fn pipeline_enforces_inv3_translation() {
+        // A stage in a different vector space (m2) than the inbound message (m1).
+        let build = || {
+            let fab = LocalFabric::new();
+            let e1 = fab.endpoint(AgentId::new("s1"), fp("m1"));
+            let e2 = fab.endpoint(AgentId::new("s2"), fp("m2"));
+            Pipeline::new("x")
+                .stage(add_one("s1"), e1, Some(comm_cap("s1", "s2")))
+                .stage(add_one("s2"), e2, None)
+        };
+
+        // Data crossing into m2 without a Translate is rejected (INV-3).
+        let denied = build()
+            .run(msg("c", Recipient::Unicast(AgentId::new("s1")), "m1", None))
+            .await;
+        assert!(matches!(denied, Err(TamError::Invalid(m)) if m.contains("INV-3")));
+
+        // Marking the message Translate makes the cross-fingerprint hop explicit.
+        let mut translated = msg("c", Recipient::Unicast(AgentId::new("s1")), "m1", None);
+        translated.kind = MessageKind::Translate;
+        assert!(build().run(translated).await.is_ok());
     }
 }
