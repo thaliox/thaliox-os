@@ -132,7 +132,7 @@ M3 is where TAM §6 stops being a promise and becomes code.
 
 | Stage | Deliverable | CI-gated? |
 |---|---|---|
-| **M3a** | real `CognitiveState::merge` for `AgentState` (per-field CRDT) + law/￢-loss tests | ✅ pure software |
+| **M3a** ✅ | real `CognitiveState::merge` for `AgentState` (per-field CRDT) + `Checkpoint::merge` + law/no-loss tests. **Done** — `crates/runtime/src/agent.rs`. | ✅ pure software (in CI) |
 | **M3b** | migration flow: capture → transfer → restore across two in-process nodes; then across two Firecracker hosts (self-hosted) | ✅ in-process; self-hosted for VM |
 | **M3c** | supervisor: registry + heartbeat + fenced self-healing takeover | ✅ in-process |
 | **M3d** | (optional) pre-copy live migration to shrink downtime | later |

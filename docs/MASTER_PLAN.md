@@ -211,7 +211,7 @@ The iron rule: **every milestone is independently usable, demonstrable, and fund
 |---|---|---|---|
 | **H1 Software layer (running on Linux)** | ✅ M1 single-node MVP | Rust daemon + LLM (remote+local) + vector memory + tools + unified API + single client | the programming model holds; a usable product → seed round/community — **shipped `v0.1.0` (2026-06-05), see [M1-MILESTONE](M1-MILESTONE.md)** |
 | | M2 microVM-ization | one-click deployment + snapshot/restore + self-update rollback | delivers F2/F3 — **✅ done: software layer (in CI gate) + real Firecracker microVM (agent runs in-VM, vsock deploy, VM snapshot/restore; self-hosted on KVM), see [M2-PROGRESS](M2-PROGRESS.md) · [RFC-0004](rfcs/0004-firecracker-deploy.md)** |
-| | M3 multi-instance HA | live migration + CRDT merge + self-healing takeover | delivers F4 |
+| | M3 multi-instance HA | live migration + CRDT merge + self-healing takeover | delivers F4 — **🚧 in progress: design [RFC-0005](rfcs/0005-multi-instance-ha.md); M3a CRDT merge done (per-field, lawful); next migration + self-healing** |
 | | M4 cluster + multi-platform | agent↔agent + team orchestration + multi-platform clients | delivers F7/F8 → Series A |
 | | M5 learned control plane | RL scheduling + supervisor agent + self-optimization | "AI manages AI" takes shape, the differentiating moat |
 | **H2 Specialization (riding Linux)** | M6 push the stack down | eBPF observability/security → unikernel/abstract-machine contract → kernel-bypass vector transport → FPGA primitives | a real efficiency curve → Series B/strategic investment |
