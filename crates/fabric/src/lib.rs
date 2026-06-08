@@ -19,7 +19,9 @@ use thaliox_core::{
     AgentId, ModelFingerprint, Permission, Recipient, ResourceKind, TamError, VectorMessage,
     VectorPayload,
 };
-use thaliox_runtime::{DeployEnv, DeployTarget, LocalDeploy, Node, Package};
+use thaliox_runtime::{
+    Checkpoint, DeployEnv, DeployTarget, LocalDeploy, Node, NodeId, Package, Supervisor,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -396,6 +398,75 @@ where
     Ok(bound)
 }
 
+// ---------- M4b: distributed heartbeat (Supervisor over the fabric, RFC-0005 §5) ----------
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Heartbeat {
+    agent: AgentId,
+    node: String,
+    checkpoint: Checkpoint,
+}
+
+/// A node reports an agent's liveness + latest `Checkpoint` to the supervisor
+/// over TCP. The supervisor records its location and resets the miss counter.
+pub async fn send_heartbeat(
+    supervisor: SocketAddr,
+    agent: &AgentId,
+    node: &NodeId,
+    checkpoint: &Checkpoint,
+) -> Result<(), TamError> {
+    let hb = Heartbeat {
+        agent: agent.clone(),
+        node: node.0.clone(),
+        checkpoint: checkpoint.clone(),
+    };
+    let bytes = serde_json::to_vec(&hb).map_err(|e| TamError::Invalid(e.to_string()))?;
+    let mut s = TcpStream::connect(supervisor).await.map_err(io_err)?;
+    s.write_all(&(bytes.len() as u32).to_le_bytes())
+        .await
+        .map_err(io_err)?;
+    s.write_all(&bytes).await.map_err(io_err)?;
+    s.flush().await.map_err(io_err)?;
+    let mut ack = [0u8; 1];
+    s.read_exact(&mut ack).await.map_err(io_err)?;
+    Ok(())
+}
+
+/// Run a supervisor server: accept heartbeats over TCP and update the shared
+/// [`Supervisor`]'s registry (location + last-good checkpoint + liveness).
+/// Failure detection (`tick`) and `self_heal` remain the caller's policy
+/// (TAM §4.2). Returns the bound address.
+pub async fn serve_supervisor(
+    supervisor: Arc<Mutex<Supervisor>>,
+    addr: SocketAddr,
+) -> Result<SocketAddr, TamError> {
+    let listener = TcpListener::bind(addr).await.map_err(io_err)?;
+    let bound = listener.local_addr().map_err(io_err)?;
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                continue;
+            };
+            let mut len = [0u8; 4];
+            if stream.read_exact(&mut len).await.is_err() {
+                continue;
+            }
+            let n = u32::from_le_bytes(len) as usize;
+            let mut buf = vec![0u8; n];
+            if stream.read_exact(&mut buf).await.is_err() {
+                continue;
+            }
+            if let Ok(hb) = serde_json::from_slice::<Heartbeat>(&buf) {
+                let mut s = supervisor.lock().unwrap();
+                s.observe(&hb.agent, NodeId::new(hb.node), hb.checkpoint);
+                s.heartbeat(&hb.agent);
+            }
+            let _ = stream.write_all(&[1u8]).await;
+        }
+    });
+    Ok(bound)
+}
+
 #[cfg(test)]
 mod tests {
     use thaliox_core::{CapabilityToken, Dtype, IntentGroup, MessageKind, Scope};
@@ -615,5 +686,46 @@ mod tests {
         let node = dest.lock().unwrap();
         let moved = node.agent(&id).expect("agent migrated to dest");
         assert_eq!(moved.remaining_budget(), 95); // migrated state, not reset
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn distributed_heartbeat_detects_failure() {
+        use thaliox_cognition::MockProvider;
+        use thaliox_core::AttentionBudget;
+        use thaliox_memory::InMemorySpace;
+        use thaliox_runtime::{Agent, Health};
+
+        // A checkpoint to report.
+        let mut agent = Agent::new(
+            AgentId::new("a1"),
+            AttentionBudget::new(100, 1000),
+            Arc::new(InMemorySpace::new()),
+            Arc::new(MockProvider::new("ok", 5)),
+        );
+        agent.start().unwrap();
+        let ckpt = agent.checkpoint();
+
+        // Supervisor server (3 missed beats ⇒ suspected).
+        let sup = Arc::new(Mutex::new(Supervisor::new(3)));
+        let addr = serve_supervisor(sup.clone(), "127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+
+        // Node A heartbeats over TCP; the ack means the supervisor recorded it.
+        let id = AgentId::new("a1");
+        send_heartbeat(addr, &id, &NodeId::new("A"), &ckpt)
+            .await
+            .unwrap();
+        assert_eq!(sup.lock().unwrap().node_of(&id), Some(&NodeId::new("A")));
+        assert_eq!(sup.lock().unwrap().health(&id), Some(Health::Healthy));
+
+        // Node A goes silent — three ticks later it is suspected down.
+        {
+            let mut s = sup.lock().unwrap();
+            s.tick();
+            s.tick();
+            assert!(s.tick().contains(&id));
+        }
+        assert_eq!(sup.lock().unwrap().health(&id), Some(Health::Suspected));
     }
 }

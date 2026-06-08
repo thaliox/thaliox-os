@@ -14,6 +14,7 @@ thaliox-core.workspace = true
 # fabric uses LocalDeploy + host-provided minds, so it can build static/musl.
 thaliox-runtime = { path = "../runtime", default-features = false }
 async-trait.workspace = true
+serde.workspace = true
 tokio = { workspace = true }
 serde_json.workspace = true
 
