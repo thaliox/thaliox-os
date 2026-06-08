@@ -12,6 +12,8 @@
 //! and audited (INV-4).
 
 pub mod agent;
+/// M3 cluster primitives — nodes & migration (RFC-0005 §2–3).
+pub mod cluster;
 /// RFC-0003 §5 falsification gate for the MELD dataflow pillar
 /// (E4 dataflow-scheduled forward pass).
 pub mod experiment;
@@ -26,6 +28,7 @@ pub mod update;
 pub mod vmproto;
 
 pub use agent::{Action, Agent, Outcome};
+pub use cluster::{MigrateError, Node, NodeId, migrate};
 #[cfg(feature = "firecracker")]
 pub use firecracker::{FcError, FirecrackerConfig, FirecrackerDeploy, MicroVm};
 pub use package::{DeployEnv, DeployTarget, LocalDeploy, Manifest, Package, PackageError};
