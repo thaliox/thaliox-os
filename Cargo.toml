@@ -12,6 +12,7 @@ members = [
     "crates/api",
     "crates/tools",
     "crates/guest-runner",
+    "crates/fabric-node",
 ]
 
 [workspace.package]

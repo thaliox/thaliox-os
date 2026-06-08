@@ -1070,6 +1070,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "thaliox-fabric-node"
+version = "0.1.0"
+dependencies = [
+ "thaliox-cognition",
+ "thaliox-core",
+ "thaliox-fabric",
+ "thaliox-memory",
+ "thaliox-runtime",
+ "tokio",
+]
+
+[[package]]
 name = "thaliox-guest-runner"
 version = "0.1.0"
 dependencies = [
