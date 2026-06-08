@@ -117,7 +117,7 @@ becomes the cluster's front door, not a single agent's.
 | Stage | Deliverable | CI-gated? |
 |---|---|---|
 | **M4a** ✅ | agent↔agent over an **in-process** `Transport`. **Done** — `fabric::LocalFabric` routes `VectorMessage`s between `Endpoint`s (unicast + multicast); `send` is INV-2 capability-gated; `fidelity()` enforces INV-3 (Lossless / NeedsTranslation / Unaligned). | ✅ pure software (in CI) |
-| **M4b** | **networked** `Transport` (TCP) + distributed `Supervisor`/`migrate`: cross-host heartbeat, registry, migration, self-healing. **Cross-host HA validated on the KVM host.** | ✅ in-process tests; self-hosted multi-host |
+| **M4b** 🚧 | **networked** `Transport` (TCP) + distributed `migrate`/`Supervisor`. **Transport + migration done** — `fabric::NetNode`/`NetEndpoint` (VectorMessage over TCP, INV-2-gated) and `send_migration`/`serve_migrations` (a `Package` migrates over TCP onto a remote node, state intact), both validated in CI over real loopback TCP. *Remaining:* distributed heartbeat (Supervisor over the fabric) and a genuine two-machine run (a lean cross-compiled node binary + a port/tunnel). | ✅ real-TCP tests (CI); two-machine self-hosted next |
 | **M4c** | **teams**: `Team` execution for the Pipeline paradigm first, then Hierarchy/Market/Swarm | ✅ in-process |
 | **M4d** | **multi-platform clients**: generalize the `api` gateway as the cluster front door | ✅ in-process |
 
