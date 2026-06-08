@@ -41,22 +41,19 @@ Five invariants constrain any implementation: **INV-1 budget conservation · INV
 | `thaliox-cap` | — | capability token issuing / verification (canonical **length-prefixed** signature, scope enforcement) |
 | `thaliox-api` | L5 | unified API gateway (axum) + multi-language SDK entry |
 
-## Status: ✅ M1 single-node MVP shipped (2026-06-05, `v0.1.0`)
+## Status: ✅ M4 cluster + multi-platform shipped (2026-06-08, `v0.4.0`)
 
-M1 proves the **programming model holds**: a single-node agent that, under the five TAM invariants,
-completes a task autonomously. See [docs/M1-MILESTONE.md](docs/M1-MILESTONE.md). Delivered:
+THALIOX is now **an operating system for a distributed society of agents**. The H1
+software arc through M4 is complete — each milestone independently valuable:
 
-- **Cognition** — a unified `LlmProvider` wired to Anthropic Messages / OpenAI Chat Completions (and any compatible gateway), with an offline mock fallback.
-- **Memory** — `SemanticSpace` vector memory (remember / recall).
-- **Tools + autonomous loop** — `Agent::run(goal)`: **the model decides which tool to call** (`web_search` / `fetch`), executes it, feeds the result back, and keeps thinking until it answers.
-- **Attention budget** — reservation → real-token reconciliation (INV-1 conservation), refunds on failure.
-- **Capability gating** — every act verifies signature + expiry + scope (INV-2 first), fully audited (INV-4).
-- **API gateway** — axum HTTP: `/agents` lifecycle + think / remember / recall / invoke + audit queries.
+- **M1 single-node MVP** (`v0.1.0`) — a single agent that, under the five TAM invariants, completes a task autonomously: unified `LlmProvider` cognition, `SemanticSpace` vector memory, autonomous tool-calling loop, attention-budget conservation (INV-1), capability gating (INV-2) + audit (INV-4), and an axum HTTP gateway. See [docs/M1-MILESTONE.md](docs/M1-MILESTONE.md).
+- **M2 microVM-ization** — one-command deploy + snapshot/restore + self-update rollback; the agent runs **inside a real Firecracker microVM** (vsock deploy, VM snapshot/restore), validated on KVM bare-metal. [RFC-0004](docs/rfcs/0004-firecracker-deploy.md).
+- **M3 multi-instance HA** — per-field CRDT merge, `Node` + `migrate`, and a `Supervisor` (heartbeat → self-heal → reconcile). [RFC-0005](docs/rfcs/0005-multi-instance-ha.md).
+- **M4 cluster + multi-platform** — a `fabric` that carries `VectorMessage`s between agents and across nodes; **cross-host live migration validated on two KVM machines** at both process- and microVM-level (the full {VM, host-process} migration matrix); **teams** in four paradigms (Pipeline / Hierarchy / Market / Swarm); and the `api` gateway generalized into the **cluster's front door** (capability admission, SSE streaming, peer routing). [RFC-0006](docs/rfcs/0006-cluster-multiplatform.md).
 
-**Verified (glm-5.1 + Tavily)**: given a goal, the model autonomously calls `web_search` → real search → one-line summary;
-audit trail `Think → ToolInvoke → Think`, budget reconciled line by line.
+INV-2 and INV-3 are enforced *between* agents and at the cluster door, not just inside one agent — the team/cluster boundary is not a hole in the invariants.
 
-All four gates green: `fmt` · `clippy -D warnings` · `test` (30) · `doc -D warnings`.
+All four gates green: `fmt` · `clippy -D warnings` · `test` (103) · `doc -D warnings`.
 
 ### Quickstart
 
@@ -74,9 +71,9 @@ cargo run -p thaliox-api      --example gateway        # HTTP gateway on :8088
 
 ## Roadmap
 
-H1 software (on Linux) → H2 specialization (push down the stack) → H3 co-designed silicon. Next up is
-**M2 microVM packaging** (one-command deploy + snapshot/restore + self-update rollback). Full roadmap in
-[docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
+H1 software (on Linux) → H2 specialization (push down the stack) → H3 co-designed silicon. M1–M4 are
+shipped; next up is **M5 learned control plane** (RL scheduling + a supervisor agent + self-optimization
+— "AI manages AI"). Full roadmap in [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
 
 ## Contributing
 

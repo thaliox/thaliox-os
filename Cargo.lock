@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-api"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "http-body-util",
@@ -1024,12 +1024,13 @@ dependencies = [
  "thaliox-runtime",
  "thaliox-tools",
  "tokio",
+ "tokio-stream",
  "tower",
 ]
 
 [[package]]
 name = "thaliox-cap"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "hmac",
  "sha2",
@@ -1038,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-cognition"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -1048,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-core"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1057,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-fabric"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1071,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-fabric-node"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "thaliox-cognition",
  "thaliox-core",
@@ -1083,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-guest-runner"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "libc",
  "thaliox-cognition",
@@ -1095,7 +1096,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-memory"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "parking_lot",
  "thaliox-core",
@@ -1103,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-runtime"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1118,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-tools"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -1206,6 +1207,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
 dependencies = [
  "rustls",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32da49809aab5c3bc678af03902d4ccddea2a87d028d86392a4b1560c6906c70"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
  "tokio",
 ]
 
