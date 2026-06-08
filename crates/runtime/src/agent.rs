@@ -19,14 +19,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use thaliox_cognition::{Completion, LlmProvider, Message, ToolSpec};
+use thaliox_cognition::{CognitiveState, Completion, LlmProvider, Message, ToolSpec};
 use thaliox_core::{
     AgentId, AttentionBudget, AuditRecord, CapabilityToken, CapabilityVerifier, Operation,
     ResourceKind, SemanticObject, SemanticSpace, TamError, Tool,
 };
 
-use crate::Phase;
+use crate::{Checkpoint, Phase};
 
 /// A parameterized, executable agent action. Each carries its **declared cost**
 /// (tokens), charged before execution per INV-1.
@@ -108,6 +109,29 @@ pub struct Agent {
     audit: Vec<AuditRecord>,
 }
 
+/// The **portable** part of an agent — everything needed to reconstruct it on
+/// another node. The environment (`memory` / `mind` / `tools` / `verifier`) is
+/// deliberately excluded: the long-term store is external and addressable
+/// (RFC-0002 §3.4), so only this bounded state travels.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AgentState {
+    budget: AttentionBudget,
+    caps: Vec<CapabilityToken>,
+    phase: Phase,
+    audit: Vec<AuditRecord>,
+}
+
+impl CognitiveState for AgentState {
+    fn serialize(&self) -> Vec<u8> {
+        serde_json::to_vec(self).expect("AgentState is always serializable")
+    }
+    fn restore(blob: &[u8]) -> Result<Self, thaliox_cognition::StateError> {
+        serde_json::from_slice(blob)
+            .map_err(|e| thaliox_cognition::StateError::Decode(e.to_string()))
+    }
+    // `merge` stays the contract default (Unsupported) — M3 / RFC-0003 pillar 2.
+}
+
 impl Agent {
     /// Spawn an agent (`Born`) with a budget, a memory view, and a mind.
     pub fn new(
@@ -178,6 +202,49 @@ impl Agent {
     /// The immutable audit trail (INV-4).
     pub fn audit(&self) -> &[AuditRecord] {
         &self.audit
+    }
+
+    /// Capture the agent's complete recoverable state as a [`Checkpoint`]
+    /// (TAM §6). The blob holds only the **portable** state (budget + caps +
+    /// phase + audit); the environment is rebound on [`restore`](Agent::restore),
+    /// since the long-term store is external and addressable (RFC-0002 §3.4).
+    /// This is the M2 snapshot primitive; rollback = `restore` a prior blob.
+    pub fn checkpoint(&self) -> Checkpoint {
+        let state = AgentState {
+            budget: self.budget.clone(),
+            caps: self.caps.clone(),
+            phase: self.phase,
+            audit: self.audit.clone(),
+        };
+        Checkpoint {
+            agent: self.id.clone(),
+            budget: self.budget.clone(),
+            state: CognitiveState::serialize(&state),
+        }
+    }
+
+    /// Rebuild an agent from a [`Checkpoint`], rebinding the environment
+    /// (`memory` + `mind`). Migration (RFC-0001 §6) is `restore` on the target
+    /// node. Re-attach tools and a verifier afterwards with
+    /// [`with_tool`](Agent::with_tool) / [`with_verifier`](Agent::with_verifier).
+    pub fn restore(
+        checkpoint: &Checkpoint,
+        memory: Arc<dyn SemanticSpace>,
+        mind: Arc<dyn LlmProvider>,
+    ) -> Result<Self, TamError> {
+        let state = AgentState::restore(&checkpoint.state)
+            .map_err(|e| TamError::Invalid(format!("restore {}: {e}", checkpoint.agent)))?;
+        Ok(Self {
+            id: checkpoint.agent.clone(),
+            budget: state.budget,
+            caps: state.caps,
+            memory,
+            mind,
+            tools: HashMap::new(),
+            verifier: None,
+            phase: state.phase,
+            audit: state.audit,
+        })
     }
 
     /// The resource target an action acts on (for scope matching), in the
@@ -451,6 +518,53 @@ mod tests {
         }
         a.start().unwrap();
         a
+    }
+
+    #[tokio::test]
+    async fn checkpoint_restore_round_trips_state() {
+        // An agent that has done real work: spent budget, holds a cap, has audit.
+        let mut a = agent_with(100, vec![cap("a1", Permission::Write, "mem://a1/*")]);
+        a.act(Action::Think {
+            prompt: "hi".into(),
+            cost: 5,
+        })
+        .await
+        .unwrap();
+        a.act(Action::Remember {
+            object: obj("n1", vec![1.0, 0.0]),
+            cost: 3,
+        })
+        .await
+        .unwrap();
+
+        let cp = a.checkpoint();
+
+        // Restore onto a FRESH environment (new memory + mind), as on another node.
+        let restored = Agent::restore(
+            &cp,
+            Arc::new(InMemorySpace::new()),
+            Arc::new(MockProvider::new("ok", 5)),
+        )
+        .unwrap();
+
+        assert_eq!(restored.id(), a.id());
+        assert_eq!(restored.phase(), a.phase());
+        assert_eq!(restored.remaining_budget(), a.remaining_budget());
+        assert_eq!(restored.audit().len(), a.audit().len());
+        // Bit-for-bit: re-checkpointing the restored agent yields the same blob.
+        assert_eq!(restored.checkpoint().state, cp.state);
+    }
+
+    #[tokio::test]
+    async fn restore_rejects_a_corrupt_blob() {
+        let mut cp = agent_with(50, vec![]).checkpoint();
+        cp.state = b"not json".to_vec();
+        let err = Agent::restore(
+            &cp,
+            Arc::new(InMemorySpace::new()),
+            Arc::new(MockProvider::new("ok", 5)),
+        );
+        assert!(matches!(err, Err(TamError::Invalid(_))));
     }
 
     #[tokio::test]

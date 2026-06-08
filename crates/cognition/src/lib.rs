@@ -10,9 +10,12 @@ pub mod anthropic;
 /// E2 energy-based readout).
 pub mod experiment;
 pub mod openai;
+/// The Model-State Contract (RFC-0002 §4) — recoverable state as an OS object.
+pub mod state;
 
 pub use anthropic::AnthropicProvider;
 pub use openai::OpenAiProvider;
+pub use state::{CognitiveState, StateError};
 
 use std::collections::VecDeque;
 use std::sync::Mutex;
