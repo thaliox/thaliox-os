@@ -216,7 +216,21 @@ The iron rule: **every milestone is independently usable, demonstrable, and fund
 | | M5 learned control plane | RL scheduling + supervisor agent + self-optimization | "AI manages AI" takes shape, the differentiating moat |
 | **H2 Specialization (riding Linux)** | M6 push the stack down | eBPF observability/security → unikernel/abstract-machine contract → kernel-bypass vector transport → FPGA primitives | a real efficiency curve → Series B/strategic investment |
 | **H3 Co-designed silicon** | M7 single-primitive tape-out | tape out just one primitive that is uniquely yours (vector-transport NIC / capability memory controller / dataflow attention engine) | a hardware moat → large hardware financing |
-| | M8 vertically integrated node + fabric | a complete THALIOX machine | an OS that truly belongs to AI |
+| | M8 vertically integrated node + fabric | a complete THALIOX machine **running the self-designed MELD cognitive substrate on co-designed silicon** (see §6.1) | an OS that truly belongs to AI |
+
+---
+
+### 6.1 The model-architecture track — the LLM THALIOX runs
+
+The milestones above build the OS; a parallel **model lane** builds the mind it runs. The model is chosen not by benchmark but by what the OS can manage as a first-class object — **snapshot / migrate / gate / merge** (the same reason M2's KV-cache problem forced the architecture, [RFC-0002](rfcs/0002-near-term-model-architecture.md) §1). Two RFCs fix this lane, and it lands **across** the milestones rather than as one milestone:
+
+| Stage | Model deliverable | Where it lands | RFC |
+|---|---|---|---|
+| **Workhorse** | **Bounded-State Hybrid + MoE** — fixed-size, serializable runtime state (so an agent is snapshottable/migratable), MoE capacity, adaptive compute as the AttentionBudget knob | Model-State Contract shipped in **M2**; adaptive-compute actuator feeds **M5** | [RFC-0002](rfcs/0002-near-term-model-architecture.md) — Accepted |
+| **Self-designed** | **MELD** (Mergeable · Energy-based · Latent · Dataflow) — state-as-process, **mergeable cognition** (the M3 CRDT-merge primitive), capability-addressed memory, dataflow execution | pillar gates **E1–E4 passed** (toy scale, [RFC-0003 §5.3](rfcs/0003-meld-cognitive-substrate.md)); merge → **M3**; its silicon primitives are **M7**'s tape-out targets | [RFC-0003](rfcs/0003-meld-cognitive-substrate.md) — Exploratory |
+| **Vertically integrated** | the self-designed model **on co-designed silicon** — MELD's dataflow / capability-memory / vector-transport primitives realized in hardware | **M8** | [RFC-0003 §7](rfcs/0003-meld-cognitive-substrate.md) |
+
+So **M8 is not merely "a machine" — it is the machine running THALIOX's own model on THALIOX's own silicon**, model and hardware co-designed to the same TAM contract. That is the point where "AI manages AI" and "an OS that belongs to AI" become literally true. The bet is de-risked the same staged way as the OS: the workhorse is usable on H1 today, and MELD's hardest claim (mergeable cognition) already cleared its toy-scale kill-gate before any silicon spend.
 
 ---
 
