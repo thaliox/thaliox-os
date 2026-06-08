@@ -21,6 +21,7 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -384,6 +385,55 @@ fn fc_launch(fc_bin: &str, kernel: &str, rootfs: &str, workdir: &str) -> i32 {
     0
 }
 
+/// Host side (F4): launch + deploy, snapshot the VM, kill it, then restore from
+/// the snapshot — and prove the agent's live in-RAM state (budget 95) survived.
+fn fc_snapshot(fc_bin: &str, kernel: &str, rootfs: &str, workdir: &str) -> i32 {
+    let deployer = FirecrackerDeploy::new(FirecrackerConfig::new(fc_bin, kernel, rootfs, workdir));
+
+    let vm = match deployer.launch() {
+        Ok(v) => v,
+        Err(e) => {
+            println!("launch failed: {e}");
+            return 1;
+        }
+    };
+    match vm.deploy(&demo_package()) {
+        Ok(m) => println!("deploy   -> {m}"),
+        Err(e) => {
+            println!("deploy failed: {e}");
+            return 1;
+        }
+    }
+
+    let snap = Path::new(workdir).join("vm.snapshot");
+    let mem = Path::new(workdir).join("vm.mem");
+    if let Err(e) = vm.snapshot(&snap, &mem) {
+        println!("snapshot failed: {e}");
+        return 1;
+    }
+    println!("snapshot -> captured VM (memory + state)");
+    drop(vm); // tear down the original Firecracker process
+    println!("original -> killed");
+
+    let restored = match deployer.restore(&snap, &mem) {
+        Ok(v) => v,
+        Err(e) => {
+            println!("restore failed: {e}");
+            return 1;
+        }
+    };
+    println!("restored -> resumed from snapshot on a fresh Firecracker");
+    match restored.health() {
+        Ok(m) => println!("health   -> {m}  (in-RAM agent state survived the snapshot)"),
+        Err(e) => println!("health err: {e}"),
+    }
+    match restored.shutdown() {
+        Ok(()) => println!("shutdown -> ok"),
+        Err(e) => println!("shutdown err: {e}"),
+    }
+    0
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let parse_port = |i: usize| -> u32 {
@@ -403,6 +453,12 @@ fn main() {
         Some("drive") => run_drive(args.get(2).map(String::as_str).unwrap_or("/dev/vdb")),
         Some("mkdrive") => make_drive(args.get(2).map(String::as_str).unwrap_or("package.img")),
         Some("fc-launch") => fc_launch(
+            args.get(2).map(String::as_str).unwrap_or("firecracker"),
+            args.get(3).map(String::as_str).unwrap_or("vmlinux"),
+            args.get(4).map(String::as_str).unwrap_or("rootfs.ext4"),
+            args.get(5).map(String::as_str).unwrap_or("."),
+        ),
+        Some("fc-snapshot") => fc_snapshot(
             args.get(2).map(String::as_str).unwrap_or("firecracker"),
             args.get(3).map(String::as_str).unwrap_or("vmlinux"),
             args.get(4).map(String::as_str).unwrap_or("rootfs.ext4"),

@@ -178,6 +178,48 @@ impl FirecrackerDeploy {
         )?;
         Ok(vm)
     }
+
+    /// Restore a microVM from a Firecracker VM snapshot and resume it (RFC-0004
+    /// §3 / F4). The guest — and its live in-RAM agent — continues exactly where
+    /// [`MicroVm::snapshot`] left off, on a fresh Firecracker process.
+    pub fn restore(&self, snapshot_path: &Path, mem_path: &Path) -> Result<MicroVm, FcError> {
+        let c = &self.config;
+        let api_sock = c.workdir.join("fc-restore-api.sock");
+        // The snapshot encodes the original vsock uds_path; Firecracker recreates
+        // the listener there, so we reuse it (clearing any stale socket file).
+        let vsock_uds = c.workdir.join("fc-vsock.sock");
+        let console = c.workdir.join("fc-restore-console.log");
+        let _ = fs::remove_file(&api_sock);
+        let _ = fs::remove_file(&vsock_uds);
+
+        let log = fs::File::create(&console)?;
+        let child = Command::new(&c.fc_bin)
+            .arg("--api-sock")
+            .arg(&api_sock)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log.try_clone()?))
+            .stderr(Stdio::from(log))
+            .spawn()?;
+
+        let vm = MicroVm {
+            child,
+            api_sock,
+            vsock_uds,
+            port: c.vsock_port,
+            console,
+        };
+        wait_for_path(&vm.api_sock, Duration::from_secs(5))?;
+        api_put(
+            &vm.api_sock,
+            "/snapshot/load",
+            &format!(
+                "{{\"snapshot_path\":\"{}\",\"mem_backend\":{{\"backend_path\":\"{}\",\"backend_type\":\"File\"}},\"resume_vm\":true}}",
+                snapshot_path.display(),
+                mem_path.display()
+            ),
+        )?;
+        Ok(vm)
+    }
 }
 
 /// A running microVM and its control channel.
@@ -251,6 +293,33 @@ impl MicroVm {
         }
     }
 
+    /// Pause the VM (required before snapshotting).
+    pub fn pause(&self) -> Result<(), FcError> {
+        api_patch(&self.api_sock, "/vm", "{\"state\":\"Paused\"}")
+    }
+
+    /// Resume a paused VM.
+    pub fn resume(&self) -> Result<(), FcError> {
+        api_patch(&self.api_sock, "/vm", "{\"state\":\"Resumed\"}")
+    }
+
+    /// Pause and capture a **full Firecracker VM snapshot** (memory + device
+    /// state) for fast local resume — the RFC-0004 §3 performance layer. The
+    /// agent's *live in-RAM state* is captured as-is, so a restore resumes it
+    /// without re-deploying. (Distinct from the portable agent `checkpoint`.)
+    pub fn snapshot(&self, snapshot_path: &Path, mem_path: &Path) -> Result<(), FcError> {
+        self.pause()?;
+        api_put(
+            &self.api_sock,
+            "/snapshot/create",
+            &format!(
+                "{{\"snapshot_type\":\"Full\",\"snapshot_path\":\"{}\",\"mem_file_path\":\"{}\"}}",
+                snapshot_path.display(),
+                mem_path.display()
+            ),
+        )
+    }
+
     /// One request/response over Firecracker's vsock UDS (host-initiated
     /// `CONNECT <port>` handshake, then one [`vmproto`] frame).
     fn rpc(&self, tag: u8, payload: &[u8]) -> Result<(u8, Vec<u8>), FcError> {
@@ -292,16 +361,16 @@ fn status_string(st: u8, r: Vec<u8>) -> Result<String, FcError> {
     }
 }
 
-/// A minimal HTTP/1.1 PUT to Firecracker's API socket; expects 200/204.
-fn api_put(sock: &Path, path: &str, body: &str) -> Result<(), FcError> {
+/// A minimal HTTP/1.1 request to Firecracker's API socket; expects 200/204.
+fn api_request(sock: &Path, method: &str, path: &str, body: &str) -> Result<(), FcError> {
     let mut s = UnixStream::connect(sock)?;
     let req = format!(
-        "PUT {path} HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\n\
+        "{method} {path} HTTP/1.1\r\nHost: localhost\r\nAccept: application/json\r\n\
          Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     s.write_all(req.as_bytes())?;
-    s.set_read_timeout(Some(Duration::from_secs(3))).ok();
+    s.set_read_timeout(Some(Duration::from_secs(10))).ok();
     let mut buf = Vec::new();
     let _ = s.read_to_end(&mut buf); // Connection: close → EOF (or times out)
     let resp = String::from_utf8_lossy(&buf);
@@ -309,8 +378,16 @@ fn api_put(sock: &Path, path: &str, body: &str) -> Result<(), FcError> {
     if status.contains(" 204") || status.contains(" 200") {
         Ok(())
     } else {
-        Err(FcError::Api(format!("{path} -> {status}")))
+        Err(FcError::Api(format!("{method} {path} -> {status}")))
     }
+}
+
+fn api_put(sock: &Path, path: &str, body: &str) -> Result<(), FcError> {
+    api_request(sock, "PUT", path, body)
+}
+
+fn api_patch(sock: &Path, path: &str, body: &str) -> Result<(), FcError> {
+    api_request(sock, "PATCH", path, body)
 }
 
 fn wait_for_path(p: &Path, timeout: Duration) -> Result<(), FcError> {
