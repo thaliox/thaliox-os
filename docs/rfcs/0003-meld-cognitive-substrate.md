@@ -74,20 +74,34 @@ If these hold over a *meaningful* latent space, then:
 
 ## 5. Falsification-First Research Plan
 
-We do not fund MELD on faith. We fund the pillar that, if false, kills the design — **pillar 2 — first, at toy scale.**
+We do not fund MELD on faith. We fund the pillar that, if false, kills the design — **pillar 2 — first, at toy scale** — then the rest. **Round 1 is complete: all four falsifiable pillars passed their toy-scale gates (§5.3).**
 
-**Experiment E1 — Toy Mergeable Latent (gate to all further MELD work).**
+**Experiment E1 — Toy Mergeable Latent (gate to all further MELD work).** ✅ **Passed.**
 
 - Setup: a minimal model with an explicit fixed latent state and a candidate merge operator `⊕`.
 - Procedure: fork one agent into two, let each process divergent inputs, then `merge`.
 - **Success criterion:** the merged state performs measurably **better than discarding either branch** (and degrades gracefully), with `⊕` empirically near-commutative/associative/idempotent within tolerance.
 - **Failure criterion (kill):** merge is no better than picking one branch, or the algebraic laws fail badly. ⇒ Pillar 2 is redesigned or abandoned, and MELD falls back to RFC-0002 + pillars 3–5 only.
+- **Result:** a lattice-join operator (`MaxConfidence`) is both useful (cuts error to ~⅙ of a single branch's) and *exactly* CRDT-lawful (comm/assoc/idem residuals = 0); a confidence-weighted mean is useful but **breaks idempotency** (residual ≈ 0.70), confirming the gate discriminates. **Pillar 2 — the kill-gate — holds.**
 
-Subsequent experiments, each independently integratable behind the contract:
+Subsequent experiments, each independently integratable behind the contract — **all passed:**
 
-- **E2** — energy/diffusion latent readout as a standalone `step()` implementation; validate steps↔quality trade for the AttentionBudget knob.
-- **E3** — capability-addressed memory: prove a read with no capability is structurally impossible, not merely refused.
-- **E4** — dataflow scheduling of a forward pass across ≥2 microVMs/nodes.
+- **E2** — energy/diffusion latent readout as a standalone `step()` implementation; validate steps↔quality trade for the AttentionBudget knob. ✅ Energy falls monotonically (2.80 → 0.12); error 0.53 → 0.03 and **saturates by ~8 steps** ⇒ a real, *boundable* budget knob.
+- **E3** — capability-addressed memory: prove a read with no capability is structurally impossible, not merely refused. ✅ Against the addressed store *every* unauthorized path — raw dump, wrong scope, missing permission, expired, forged — yields **zero plaintext** while the authorized read works; a plain checked store leaks on a raw dump, the contrast proving the distinction is real. Exercises the production `HmacSigner` verify + `authorizes` (INV-2).
+- **E4** — dataflow scheduling of a forward pass across ≥2 nodes. ✅ Every op→node partition is **bit-identical** to the single-node run (location-independent); multi-node placement overlaps the branches, cutting makespan **5 → 3**; placement changes only cross-node messages (2 vs 4), never the result.
+
+### 5.3 Round-1 Results (toy scale)
+
+All gates are **deterministic, zero-dependency, and enforced by unit tests in CI** — each is one `cargo run` away from reproduction.
+
+| Gate | Pillar | Claim under test | Verdict | Headline metric | Code · example |
+|---|---|---|---|---|---|
+| **E1** | 2 Mergeable Cognition | a latent merge `⊕` is useful **and** CRDT-lawful | ✅ PASS | lawful op cuts error ~6×; unlawful op idempotency residual ≈ 0.70 | `cognition::experiment::e1` · `e1_mergeable_latent` |
+| **E2** | 3 Energy-based Readout | steps↔quality is a monotone, saturating budget knob | ✅ PASS | rmse 0.53 → 0.03, saturates ≤ 8 steps; energy strictly ↓ | `cognition::experiment::e2` · `e2_energy_readout` |
+| **E3** | 4 Capability-addressed Memory | no-cap access is **structurally** unreachable | ✅ PASS | 0 plaintext on all 5 unauthorized paths; checked store leaks on dump | `cap::experiment::e3` · `e3_capability_addressed` |
+| **E4** | 5 Dataflow Execution | a forward pass is location-independent **and** parallelizable | ✅ PASS | every partition bit-identical; makespan 5 → 3 across 2 nodes | `runtime::experiment::e4` · `e4_dataflow_pass` |
+
+**Reading the result honestly.** Each gate proves its claim *at toy scale* — that the primitive can exist and behaves as required when isolated. None proves the primitive *scales* to a real latent space, a non-convex readout, hardware-enforced capabilities, or a production graph; those are E-series successors and the H2/H3 work. What Round 1 establishes is narrower but decisive: **no pillar was falsified, and the gate that could have ended MELD — E1's mergeable cognition (§4) — held.** Pillar 1 (State-not-Stream) carries no separate gate; it is realized by the Model-State Contract (RFC-0002 §4).
 
 ---
 
@@ -98,7 +112,7 @@ The **Model-State Contract** (RFC-0002 §4) is the single integration seam.
 | Track | Horizon | Deliverable | Independently landable? |
 |---|---|---|---|
 | **A — workhorse** | now → M2 → M3 | Bounded-State Hybrid + MoE (RFC-0002) | ✅ main line |
-| **B — pillar research** | from M2, modular | E1 (merge), E2 (readout), E3 (cap-memory), E4 (dataflow) | ✅ each pillar slots in behind the contract |
+| **B — pillar research** | from M2, modular | E1 (merge), E2 (readout), E3 (cap-memory), E4 (dataflow) — **Round 1 all passed (§5.3)** | ✅ each pillar slots in behind the contract |
 | **C — MELD integration** | H2 → H3 | compose validated pillars; co-design with silicon | gated on B's evidence |
 
 Because every artifact implements `CognitiveState`, A, the B pillars, and C are interchangeable. "MELD can land at any time" is therefore a **build-time guarantee**, not an aspiration: we ship A today, prove pillars in B, and assemble C only on evidence.
@@ -144,7 +158,7 @@ The whole is original; pillar 2 is a genuine invention. That is what "innovative
 
 ## 10. Open Questions
 
-1. What concrete latent geometry admits a useful CRDT merge `⊕` (group? lattice? learned monoid)?
+1. What concrete latent geometry admits a useful CRDT merge `⊕` (group? lattice? learned monoid)? *(E1 §5.3: a **lattice join** works at toy scale; the open part is closing the accuracy gap to unlawful operators, and whether it holds in a learned latent.)*
 2. Does energy-based readout subsume autoregression, or coexist with it as a "fast path / slow path"?
 3. Can capability tags be made differentiable-friendly, or must they sit strictly at hard boundaries (memory, cross-agent)?
 4. What is the minimal fixed state size that still supports useful merge — does merge impose a size floor?
@@ -154,4 +168,4 @@ The whole is original; pillar 2 is a genuine invention. That is what "innovative
 
 ## 11. Conclusion
 
-THALIOX's long-horizon model is not chosen from the menu of existing architectures, because none of them was designed for a world where the OS owns the model's mind. **MELD is designed from that world outward:** a mergeable, energy-reasoning, capability-gated, dataflow-scheduled cognitive substrate, whose hardest claim — *mergeable cognition* — is also its deepest moat and the direct answer to RFC-0001's Open Question #3. We commit to it the disciplined way: ship RFC-0002 now, falsify pillar 2 early, and let evidence — not ambition — assemble MELD on the road to H3.
+THALIOX's long-horizon model is not chosen from the menu of existing architectures, because none of them was designed for a world where the OS owns the model's mind. **MELD is designed from that world outward:** a mergeable, energy-reasoning, capability-gated, dataflow-scheduled cognitive substrate, whose hardest claim — *mergeable cognition* — is also its deepest moat and the direct answer to RFC-0001's Open Question #3. We commit to it the disciplined way: ship RFC-0002 now, falsify pillar 2 early, and let evidence — not ambition — assemble MELD on the road to H3. **Round 1 is in: E1–E4 passed their toy-scale gates (§5.3), the kill-gate held, and no pillar was falsified — the moonshot has cleared its first, cheapest checkpoint.**
