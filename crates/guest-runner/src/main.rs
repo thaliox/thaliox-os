@@ -147,13 +147,14 @@ fn main() {
 
     std::io::stdout().flush().ok();
 
-    // As PID 1 in the guest, returning would panic the kernel — power the VM off
-    // so Firecracker exits cleanly. On a normal host (pid != 1) just exit, so
-    // running this binary outside a VM never powers off the host.
+    // As PID 1 in the guest, returning would panic the kernel. Reset the VM
+    // (RB_AUTOBOOT + the `reboot=k` boot arg → i8042 reset) so Firecracker exits
+    // cleanly — F3 relies on detecting that exit. On a normal host (pid != 1)
+    // just exit, so running this binary outside a VM never resets the host.
     if std::process::id() == 1 {
         unsafe {
             libc::sync();
-            libc::reboot(libc::RB_POWER_OFF);
+            libc::reboot(libc::RB_AUTOBOOT);
         }
         // If reboot returned (shouldn't as PID 1), avoid exiting PID 1.
         loop {
