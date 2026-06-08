@@ -7,8 +7,8 @@
 | **Supersedes** | — |
 | **Depends on** | [RFC-0001 (TAM)](0001-abstract-machine.md), [RFC-0002 (Model-State Contract)](0002-near-term-model-architecture.md), [MASTER_PLAN.md](../MASTER_PLAN.md), [M2-PROGRESS](../M2-PROGRESS.md) |
 
-> **This RFC designs the Firecracker realization of the M2 deployment unit.** The software layer already defines the seam — `Package`, `DeployTarget`, and the in-process `LocalDeploy` (RFC-0002 §4 / `runtime::package`). `FirecrackerDeploy` implements the **same `DeployTarget` trait**, differing only in *where* the agent runs: inside a microVM rather than the host process.
-> The host chain (boot + Full snapshot + restore/resume) is **already validated on real hardware** — see §10. This RFC fixes the architecture *before* code, per the chosen "design first" path.
+> **This RFC designs the Firecracker realization of the M2 deployment unit.** The software layer already defines the seam — `Package`, `DeployTarget`, and the in-process `LocalDeploy` (RFC-0002 §4 / `runtime::package`). `FirecrackerDeploy` is a sibling launcher that runs the agent **inside a microVM** and returns a `MicroVm` handle (see §6/§9).
+> **Status: all stages (host smoke + F2a–F4) implemented and validated on real KVM hardware** — see §9. The host provisioning runbook and evidence are in §10.
 
 ---
 
@@ -125,7 +125,7 @@ Implements `DeployTarget` (RFC-0002 §4). `deploy(package, env)`:
 | **F2a** ✅ | guest `agent-runner` (Rust): read `Package` from config-drive → `LocalDeploy` → run agent; baked into an ext4 rootfs. **Done — validated in-VM on the KVM host**: a 1.3 MiB static-musl runner boots as PID 1, reads `/dev/vdb`, deploys the agent (phase `Live`, budget 100), runs a `Think`, re-checkpoints, and resets so Firecracker exits cleanly in ~2 s. (`crates/guest-runner`; cognition `remote` feature gated off for the offline build.) |
 | **F2b** ✅ | swap the channel to **vsock**: runner serves `health` / `checkpoint` / `shutdown`; host sends the `Package` and pulls a checkpoint back. **Done — validated in-VM**: guest listens on `AF_VSOCK` (raw libc); host drives deploy → health → checkpoint → shutdown over Firecracker's vsock UDS. The host sends a fresh agent (budget 100), the guest runs a `Think` (→ 95), and both `health` and the pulled-back checkpoint report 95 — **guest-level state continuity proven**, closing the F2a gap. Shutdown over vsock resets the VM. |
 | **F3** ✅ | host-side `FirecrackerDeploy` (feature `firecracker`, pure std) + `MicroVm` handle. **Done — validated on the KVM host**: the Rust API spawns Firecracker, configures kernel/rootfs/vsock over a hand-rolled HTTP-over-UDS client, starts the VM, then drives the agent over vsock — `deploy` → `health` → `checkpoint` → `shutdown` — with `Drop` teardown. Run end-to-end via the musl `thaliox-runner fc-launch` (no Rust on the host); agent budget 100 → 95, checkpoint pulled back, VM reset, no leftover processes. (`runtime::firecracker`, `runtime::vmproto` shared with the guest.) Note: `FirecrackerDeploy` returns a `MicroVm` (the agent runs in-VM), so it is a sibling of `DeployTarget` rather than an impl of it — the unification is the `Package` deploy-unit + the vsock control surface, not the `-> Agent` signature. |
-| **F4** | fast hibernate/resume via Firecracker VM snapshot on the `MicroVm` handle (perf layer). |
+| **F4** ✅ | fast hibernate/resume via Firecracker VM snapshot on the `MicroVm` handle (perf layer). **Done — validated on the KVM host**: `snapshot` (pause + Full snapshot → memory + state files) and `FirecrackerDeploy::restore` (load into a fresh Firecracker + resume). The original VM is killed and the agent restored on a *new* process — `health` reports budget 95 with **no re-deploy**: the agent's live in-RAM state survived the VM snapshot/restore. (`thaliox-runner fc-snapshot`.) |
 
 Each stage is independently demonstrable on the §10 host.
 

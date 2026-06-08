@@ -1,7 +1,7 @@
 # M2 — microVM-ization progress note
 
-> **Status: 🚧 In progress · software layer complete (all in the CI gate) · Firecracker deferred to a KVM host**
-> M2's three deliverables — **one-click deployment + snapshot/restore + self-update rollback** ([MASTER_PLAN](MASTER_PLAN.md) §6, delivering F2/F3) — are **done in software**. The only remaining leg is booting the deployment unit inside a real microVM, which waits on a KVM-capable host (see §5).
+> **Status: ✅ Complete · software layer (in the CI gate) + real Firecracker microVM (self-hosted on KVM)**
+> M2's three deliverables — **one-click deployment + snapshot/restore + self-update rollback** ([MASTER_PLAN](MASTER_PLAN.md) §6, delivering F2/F3) — are done in software *and* realized on a real microVM boundary: the agent now runs **inside Firecracker**, deployed over vsock, with VM snapshot/restore. See [RFC-0004](rfcs/0004-firecracker-deploy.md) for the Firecracker leg (host smoke + F2a config-drive + F2b vsock + F3 `FirecrackerDeploy` + F4 VM snapshot, all validated on KVM hardware).
 
 M2 is the second rung of the H1 horizon. Its job is to make a running agent an **OS-managed object** — something the platform can snapshot, ship, deploy, and roll back — turning [RFC-0002](rfcs/0002-near-term-model-architecture.md)'s **Model-State Contract** from a paper §4 into runnable code, and giving the TAM `Checkpoint` (RFC-0001 §6) real `checkpoint` / `restore` semantics.
 
@@ -38,13 +38,21 @@ The software-first stance: model the microVM **boundary** in pure Rust now, behi
 - **Rollback**: after a "bad update" drains budget and adds audit, an unhealthy verdict restores the agent to the committed baseline — budget and audit back to the pre-update values, the candidate generation dropped.
 - **One-click deploy**: a `Package` serialized to bytes is parsed on a fresh host and `LocalDeploy`-ed into a live agent with its state intact; a manifest demanding an unbound tool or a mismatched model is rejected before launch.
 
-## 5. Deliberate gaps (the remaining leg)
+## 5. Firecracker leg (done — self-hosted)
 
-- **Firecracker target** — `DeployTarget` has only `LocalDeploy` (in-process). A `FirecrackerDeploy` booting the package inside a microVM will implement the **same trait**; the package format and manifest validation are unchanged, so this lands without reshaping anything. It requires a **KVM-capable host** (`/dev/kvm`), an uncompressed guest kernel + rootfs, `jailer` for isolation, and a self-hosted CI runner — none of which the current pure-cargo gate provides. Wired when that host exists.
-- **Cross-process snapshot** — today restore is in-process; the byte artifact is ready to cross a process / VM boundary, but that path is exercised only once a real target exists.
+Realized on a real KVM host and validated end-to-end ([RFC-0004](rfcs/0004-firecracker-deploy.md)):
+
+- **`FirecrackerDeploy` + `MicroVm`** (`runtime::firecracker`, feature `firecracker`, pure std) launch a microVM and drive the in-VM agent over **vsock** (`deploy` / `health` / `checkpoint` / `shutdown`).
+- The agent runs **inside Firecracker** as a static-musl guest runner (`thaliox-guest-runner`); the host orchestrates it in Rust with no host-side Rust toolchain required.
+- **VM snapshot/restore** (F4) resumes the live in-RAM agent on a fresh Firecracker process — state survives with no re-deploy.
+- It is **self-hosted and feature-gated**, so the pure-cargo CI gate stays untouched.
+
+## 6. Deliberate gaps
+
 - **Merge is a stub** — `CognitiveState::merge` is `Unsupported` by design; real mergeable state is M3 territory (RFC-0003 pillar 2, gated by E1).
+- **`jailer` hardening** — F3/F4 run bare `firecracker`; production isolation (seccomp/cgroup/chroot via `jailer`) is a follow-up.
+- **rootfs density** — a per-deploy ext4 today; shared read-only base + overlay/CoW is the scale path (RFC-0004 OQ2).
 
-## 6. Next stop
+## 7. Next stop
 
-- **M3 multi-instance HA** — live migration + CRDT merge + self-healing takeover, built directly on the `Checkpoint` this milestone made real.
-- **Firecracker** — implement `FirecrackerDeploy` against `DeployTarget` once a KVM host is provisioned.
+- **M3 multi-instance HA** — live migration + CRDT merge + self-healing takeover, built directly on the `Checkpoint` this milestone made real and the vsock checkpoint channel F2b/F3 established.
