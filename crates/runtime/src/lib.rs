@@ -12,6 +12,9 @@
 //! and audited (INV-4).
 
 pub mod agent;
+/// RFC-0003 §5 falsification gate for the MELD dataflow pillar
+/// (E4 dataflow-scheduled forward pass).
+pub mod experiment;
 
 pub use agent::{Action, Agent, Outcome};
 
