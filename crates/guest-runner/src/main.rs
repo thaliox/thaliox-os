@@ -434,6 +434,82 @@ fn fc_snapshot(fc_bin: &str, kernel: &str, rootfs: &str, workdir: &str) -> i32 {
     0
 }
 
+/// Host side (M3b across real microVMs, RFC-0005 §3): migrate an agent from one
+/// microVM to another. Deploy on VM-A, pull its portable checkpoint over vsock,
+/// deploy that into a fresh VM-B, then drain VM-A. The budget continues
+/// (100 → 95 on A, → 90 on B) — proving the agent's state *moved*, not reset.
+/// Requires `workdir/a/rootfs.ext4` and `workdir/b/rootfs.ext4` (runner baked in).
+fn fc_migrate(fc_bin: &str, kernel: &str, workdir: &str) -> i32 {
+    let cfg = |sub: &str| {
+        let w = format!("{workdir}/{sub}");
+        FirecrackerConfig::new(fc_bin, kernel, format!("{w}/rootfs.ext4"), w)
+    };
+    let dep_a = FirecrackerDeploy::new(cfg("a"));
+    let dep_b = FirecrackerDeploy::new(cfg("b"));
+
+    // VM-A: launch + deploy the agent.
+    let vm_a = match dep_a.launch() {
+        Ok(v) => v,
+        Err(e) => {
+            println!("VM-A launch failed: {e}");
+            return 1;
+        }
+    };
+    match vm_a.deploy(&demo_package()) {
+        Ok(m) => println!("VM-A deploy           -> {m}"),
+        Err(e) => {
+            println!("VM-A deploy failed: {e}");
+            return 1;
+        }
+    }
+
+    // Capture the portable checkpoint from VM-A over vsock.
+    let migrated = match vm_a.checkpoint() {
+        Ok(p) => p,
+        Err(e) => {
+            println!("VM-A checkpoint failed: {e}");
+            return 1;
+        }
+    };
+    println!(
+        "VM-A checkpoint       -> captured {} bytes",
+        migrated.to_bytes().len()
+    );
+
+    // VM-B: launch + receive the migrated checkpoint.
+    let vm_b = match dep_b.launch() {
+        Ok(v) => v,
+        Err(e) => {
+            println!("VM-B launch failed: {e}");
+            return 1;
+        }
+    };
+    match vm_b.deploy(&migrated) {
+        Ok(m) => println!("VM-B deploy(migrated) -> {m}"),
+        Err(e) => {
+            println!("VM-B deploy failed: {e}");
+            return 1;
+        }
+    }
+    match vm_b.health() {
+        Ok(m) => {
+            println!("VM-B health           -> {m}  (continued from migrated state, not reset)")
+        }
+        Err(e) => println!("VM-B health err: {e}"),
+    }
+
+    // Cutover: drain the source.
+    match vm_a.shutdown() {
+        Ok(()) => println!("VM-A drained          -> agent now authoritative on VM-B"),
+        Err(e) => println!("VM-A shutdown err: {e}"),
+    }
+    match vm_b.shutdown() {
+        Ok(()) => println!("VM-B shutdown         -> ok"),
+        Err(e) => println!("VM-B shutdown err: {e}"),
+    }
+    0
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let parse_port = |i: usize| -> u32 {
@@ -463,6 +539,11 @@ fn main() {
             args.get(3).map(String::as_str).unwrap_or("vmlinux"),
             args.get(4).map(String::as_str).unwrap_or("rootfs.ext4"),
             args.get(5).map(String::as_str).unwrap_or("."),
+        ),
+        Some("fc-migrate") => fc_migrate(
+            args.get(2).map(String::as_str).unwrap_or("firecracker"),
+            args.get(3).map(String::as_str).unwrap_or("vmlinux"),
+            args.get(4).map(String::as_str).unwrap_or("."),
         ),
         // Default in-VM (no recognized subcommand): config-drive at /dev/vdb.
         _ => run_drive("/dev/vdb"),
