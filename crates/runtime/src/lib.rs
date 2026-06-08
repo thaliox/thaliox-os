@@ -22,6 +22,8 @@ pub mod experiment;
 pub mod firecracker;
 /// M2 packaging & one-click deployment (software target; Firecracker later).
 pub mod package;
+/// M3 supervisor — health & self-healing takeover (RFC-0005 §5).
+pub mod supervisor;
 /// M2 self-update with generational rollback.
 pub mod update;
 /// Host ↔ in-VM control protocol (RFC-0004 §4) — shared with the guest-runner.
@@ -32,6 +34,7 @@ pub use cluster::{MigrateError, Node, NodeId, migrate};
 #[cfg(feature = "firecracker")]
 pub use firecracker::{FcError, FirecrackerConfig, FirecrackerDeploy, MicroVm};
 pub use package::{DeployEnv, DeployTarget, LocalDeploy, Manifest, Package, PackageError};
+pub use supervisor::{HealError, Health, Supervisor};
 pub use update::{
     CheckpointHistory, GenStatus, Generation, UpdateError, UpdateOutcome, conclude_update,
 };
