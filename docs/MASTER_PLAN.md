@@ -210,7 +210,7 @@ The iron rule: **every milestone is independently usable, demonstrable, and fund
 | Horizon | Milestone | Deliverable | What it proves / what capital it unlocks |
 |---|---|---|---|
 | **H1 Software layer (running on Linux)** | ✅ M1 single-node MVP | Rust daemon + LLM (remote+local) + vector memory + tools + unified API + single client | the programming model holds; a usable product → seed round/community — **shipped `v0.1.0` (2026-06-05), see [M1-MILESTONE](M1-MILESTONE.md)** |
-| | M2 microVM-ization | one-click deployment + snapshot/restore + self-update rollback | delivers F2/F3 |
+| | M2 microVM-ization | one-click deployment + snapshot/restore + self-update rollback | delivers F2/F3 — **🚧 software layer done (in CI gate); Firecracker pending a KVM host, see [M2-PROGRESS](M2-PROGRESS.md)** |
 | | M3 multi-instance HA | live migration + CRDT merge + self-healing takeover | delivers F4 |
 | | M4 cluster + multi-platform | agent↔agent + team orchestration + multi-platform clients | delivers F7/F8 → Series A |
 | | M5 learned control plane | RL scheduling + supervisor agent + self-optimization | "AI manages AI" takes shape, the differentiating moat |
