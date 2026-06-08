@@ -122,7 +122,7 @@ Implements `DeployTarget` (RFC-0002 §4). `deploy(package, env)`:
 
 | Stage | Deliverable |
 |---|---|
-| **F2a** | guest `agent-runner` (Rust): read `Package` from config-drive → `LocalDeploy` → run agent; baked into an ext4 rootfs. Boot it on the host, confirm the agent runs in-VM. |
+| **F2a** ✅ | guest `agent-runner` (Rust): read `Package` from config-drive → `LocalDeploy` → run agent; baked into an ext4 rootfs. **Done — validated in-VM on the KVM host**: a 1.3 MiB static-musl runner boots as PID 1, reads `/dev/vdb`, deploys the agent (phase `Live`, budget 100), runs a `Think`, re-checkpoints, and resets so Firecracker exits cleanly in ~2 s. (`crates/guest-runner`; cognition `remote` feature gated off for the offline build.) |
 | **F2b** | swap the channel to **vsock**: runner serves `health` / `checkpoint` / `shutdown`; host sends the `Package` and pulls a checkpoint back. |
 | **F3** | host-side `FirecrackerDeploy: DeployTarget` (feature-gated) + `MicroVm` handle; self-hosted integration test: deploy a `Package` → agent runs in-VM → checkpoint back → bytes match. |
 | **F4** | fast hibernate/resume via Firecracker VM snapshot on the `MicroVm` handle (perf layer). |
