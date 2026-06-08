@@ -116,7 +116,7 @@ becomes the cluster's front door, not a single agent's.
 
 | Stage | Deliverable | CI-gated? |
 |---|---|---|
-| **M4a** | agent↔agent over an **in-process** `Transport` (a real `fabric::Transport` impl): two agents exchange `VectorMessage`s, INV-3 + INV-2 enforced | ✅ pure software |
+| **M4a** ✅ | agent↔agent over an **in-process** `Transport`. **Done** — `fabric::LocalFabric` routes `VectorMessage`s between `Endpoint`s (unicast + multicast); `send` is INV-2 capability-gated; `fidelity()` enforces INV-3 (Lossless / NeedsTranslation / Unaligned). | ✅ pure software (in CI) |
 | **M4b** | **networked** `Transport` (TCP) + distributed `Supervisor`/`migrate`: cross-host heartbeat, registry, migration, self-healing. **Cross-host HA validated on the KVM host.** | ✅ in-process tests; self-hosted multi-host |
 | **M4c** | **teams**: `Team` execution for the Pipeline paradigm first, then Hierarchy/Market/Swarm | ✅ in-process |
 | **M4d** | **multi-platform clients**: generalize the `api` gateway as the cluster front door | ✅ in-process |
