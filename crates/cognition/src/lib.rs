@@ -6,6 +6,8 @@
 //! the cognition → tools → memory loop. Token usage feeds the attention budget.
 
 pub mod anthropic;
+/// E1 — toy mergeable-latent falsification gate for MELD pillar 2 (RFC-0003 §5).
+pub mod experiment;
 pub mod openai;
 
 pub use anthropic::AnthropicProvider;
