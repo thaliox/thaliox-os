@@ -1064,6 +1064,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "thaliox-guest-runner"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "thaliox-cognition",
+ "thaliox-core",
+ "thaliox-memory",
+ "thaliox-runtime",
+ "tokio",
+]
+
+[[package]]
 name = "thaliox-memory"
 version = "0.1.0"
 dependencies = [
