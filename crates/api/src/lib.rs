@@ -1,10 +1,23 @@
-//! # THALIOX api (L5) — the unified HTTP gateway
+//! # THALIOX api (L5) — the cluster front door
 //!
 //! An axum service that maps external requests onto the agent runtime: spawn an
 //! agent, then drive it (`think` / `remember` / `recall` / `invoke`) and read
 //! its `audit`. Every request bottoms out in [`Agent::act`](thaliox_runtime::Agent)
 //! — so the TAM gates (INV-1 budget · INV-2 capability · INV-4 audit) apply to
 //! HTTP callers too. (MASTER_PLAN §3 item 11, F6.)
+//!
+//! **M4d (RFC-0006 §5)** generalizes it from one agent's API into the *cluster's
+//! front door*:
+//! - **Multiple client surfaces, one model** — request/response JSON for web &
+//!   tools, plus a Server-Sent-Events stream (`/agents/{id}/events`) for live
+//!   I/O. Both go through the same authorization.
+//! - **One authorization model (INV-2 at the door)** — in cluster mode the
+//!   gateway admits a request only if it carries a `CapabilityToken`
+//!   (`x-thaliox-capability` header) granting `Communicate` over the target
+//!   agent, *before* dispatch. Open mode (the default) admits all, for local dev.
+//! - **Cluster routing** — agents placed on a peer node are answered with a
+//!   `307` to that node's gateway, so the fleet is reachable through one door
+//!   regardless of where an agent lives (`GET /cluster` shows the topology).
 //!
 //! ```no_run
 //! # use std::sync::Arc;
@@ -19,7 +32,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::header::LOCATION;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -31,47 +46,144 @@ use thaliox_core::{
     AgentId, AttentionBudget, CapabilityToken, Permission, ResourceKind, Scope, SemanticObject,
     SemanticSpace, TamError, Tool,
 };
-use thaliox_runtime::{Action, Agent, Outcome};
+use thaliox_runtime::{Action, Agent, NodeId, Outcome};
 
 /// Shared gateway state: a memory, a cognition backend, a tool set, and the live
 /// agent table. Each spawned agent is wrapped in an async mutex (its `act` is
 /// `&mut`); the table itself is a plain mutex held only briefly.
+///
+/// In **cluster mode** it also carries this node's id, a directory of agents
+/// placed on peer nodes, the peers' base URLs, and whether the door requires a
+/// capability (INV-2 admission).
 pub struct GatewayState {
+    node: NodeId,
+    require_caps: bool,
     memory: Arc<dyn SemanticSpace>,
     mind: Arc<dyn LlmProvider>,
     tools: Vec<Arc<dyn Tool>>,
     agents: Mutex<HashMap<String, Arc<AsyncMutex<Agent>>>>,
+    /// agent id → the peer node it lives on (only remote placements).
+    directory: Mutex<HashMap<String, String>>,
+    /// peer node id → its gateway base URL.
+    peers: Mutex<HashMap<String, String>>,
+}
+
+/// Where an agent lives relative to this gateway.
+enum Located {
+    /// Hosted here — drive it directly.
+    Local(Arc<AsyncMutex<Agent>>),
+    /// On a peer node — the caller is redirected to this URL.
+    Remote(String),
 }
 
 impl GatewayState {
-    /// Build shared state over a memory, cognition backend, and tool set.
+    /// Build an **open** gateway (admits all callers) on node `"local"` — the
+    /// local-dev default, unchanged from M1.
     pub fn new(
         memory: Arc<dyn SemanticSpace>,
         mind: Arc<dyn LlmProvider>,
         tools: Vec<Arc<dyn Tool>>,
     ) -> Arc<Self> {
+        Self::cluster(memory, mind, tools, "local", false)
+    }
+
+    /// Build a **cluster front door**: `node` names this gateway; when
+    /// `require_caps` is set, every agent-scoped request must present a
+    /// `CapabilityToken` granting `Communicate` over the target (INV-2).
+    pub fn cluster(
+        memory: Arc<dyn SemanticSpace>,
+        mind: Arc<dyn LlmProvider>,
+        tools: Vec<Arc<dyn Tool>>,
+        node: impl Into<String>,
+        require_caps: bool,
+    ) -> Arc<Self> {
         Arc::new(Self {
+            node: NodeId::new(node),
+            require_caps,
             memory,
             mind,
             tools,
             agents: Mutex::new(HashMap::new()),
+            directory: Mutex::new(HashMap::new()),
+            peers: Mutex::new(HashMap::new()),
         })
     }
 
-    fn agent(&self, id: &str) -> Result<Arc<AsyncMutex<Agent>>, ApiError> {
+    /// Register a peer node's gateway base URL (e.g. `http://host-b:8088`).
+    pub fn register_peer(&self, node: impl Into<String>, base_url: impl Into<String>) {
+        self.peers
+            .lock()
+            .unwrap()
+            .insert(node.into(), base_url.into());
+    }
+
+    /// Record that an agent lives on a peer node — requests for it are routed
+    /// there (front-door redirect).
+    pub fn place_remote(&self, agent: impl Into<String>, node: impl Into<String>) {
+        self.directory
+            .lock()
+            .unwrap()
+            .insert(agent.into(), node.into());
+    }
+
+    /// Resolve an agent to a local handle or a redirect URL (`suffix` is the
+    /// operation sub-path, e.g. `"/think"`). Remote placement wins.
+    fn locate(&self, id: &str, suffix: &str) -> Result<Located, ApiError> {
+        if let Some(node) = self.directory.lock().unwrap().get(id).cloned() {
+            let base = self
+                .peers
+                .lock()
+                .unwrap()
+                .get(&node)
+                .cloned()
+                .ok_or_else(|| {
+                    ApiError::Tam(TamError::Invalid(format!("no route to node '{node}'")))
+                })?;
+            let url = format!("{}/agents/{}{}", base.trim_end_matches('/'), id, suffix);
+            return Ok(Located::Remote(url));
+        }
         self.agents
             .lock()
             .unwrap()
             .get(id)
             .cloned()
+            .map(Located::Local)
             .ok_or_else(|| ApiError::NotFound(format!("agent '{id}'")))
+    }
+
+    /// INV-2 admission at the door: in cluster mode the request must carry an
+    /// `x-thaliox-capability` token granting `perm` over `target`. Open mode
+    /// admits all.
+    fn admit(&self, headers: &HeaderMap, perm: Permission, target: &str) -> Result<(), ApiError> {
+        if !self.require_caps {
+            return Ok(());
+        }
+        let raw = headers
+            .get("x-thaliox-capability")
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| {
+                ApiError::Tam(TamError::CapabilityDenied(format!(
+                    "missing capability for {target}"
+                )))
+            })?;
+        let cap: CapabilityToken = serde_json::from_str(raw)
+            .map_err(|e| ApiError::Tam(TamError::Invalid(format!("bad capability header: {e}"))))?;
+        if cap.authorizes(perm, ResourceKind::Agent, target) {
+            Ok(())
+        } else {
+            Err(ApiError::Tam(TamError::CapabilityDenied(format!(
+                "{perm:?} on agent {target}"
+            ))))
+        }
     }
 }
 
-/// Maps a [`TamError`] / not-found onto an HTTP status + JSON body.
+/// Maps a [`TamError`] / not-found / cluster-redirect onto an HTTP response.
 pub enum ApiError {
     NotFound(String),
     Tam(TamError),
+    /// The agent lives on a peer node — `307` the caller to its gateway.
+    Located(String),
 }
 
 impl From<TamError> for ApiError {
@@ -82,7 +194,12 @@ impl From<TamError> for ApiError {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
+        // Cluster front-door redirect: 307 preserves method + body.
+        if let ApiError::Located(url) = self {
+            return (StatusCode::TEMPORARY_REDIRECT, [(LOCATION, url)]).into_response();
+        }
         let (status, msg) = match self {
+            ApiError::Located(_) => unreachable!("handled above"),
             ApiError::NotFound(s) => (StatusCode::NOT_FOUND, s),
             ApiError::Tam(TamError::CapabilityDenied(s)) => {
                 (StatusCode::FORBIDDEN, format!("capability denied: {s}"))
@@ -198,6 +315,7 @@ pub struct AuditEntry {
 pub fn build_router(state: Arc<GatewayState>) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/cluster", get(cluster))
         .route("/agents", post(spawn))
         .route("/agents/{id}", get(status))
         .route("/agents/{id}/think", post(think))
@@ -205,6 +323,7 @@ pub fn build_router(state: Arc<GatewayState>) -> Router {
         .route("/agents/{id}/recall", post(recall))
         .route("/agents/{id}/invoke", post(invoke))
         .route("/agents/{id}/audit", get(audit))
+        .route("/agents/{id}/events", get(events))
         .with_state(state)
 }
 
@@ -264,8 +383,10 @@ fn status_of(a: &Agent, id: &str) -> StatusResp {
 
 async fn spawn(
     State(st): State<Arc<GatewayState>>,
+    headers: HeaderMap,
     Json(req): Json<SpawnReq>,
 ) -> Result<Json<StatusResp>, ApiError> {
+    st.admit(&headers, Permission::Communicate, &req.id)?;
     let mut agent = Agent::new(
         AgentId::new(&req.id),
         AttentionBudget::new(req.budget, 1_000_000),
@@ -299,8 +420,13 @@ async fn spawn(
 async fn status(
     State(st): State<Arc<GatewayState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
 ) -> Result<Json<StatusResp>, ApiError> {
-    let a = st.agent(&id)?;
+    st.admit(&headers, Permission::Communicate, &id)?;
+    let a = match st.locate(&id, "")? {
+        Located::Local(a) => a,
+        Located::Remote(url) => return Err(ApiError::Located(url)),
+    };
     let a = a.lock().await;
     Ok(Json(status_of(&a, &id)))
 }
@@ -308,9 +434,14 @@ async fn status(
 async fn think(
     State(st): State<Arc<GatewayState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<ThinkReq>,
 ) -> Result<Json<ThinkResp>, ApiError> {
-    let a = st.agent(&id)?;
+    st.admit(&headers, Permission::Communicate, &id)?;
+    let a = match st.locate(&id, "/think")? {
+        Located::Local(a) => a,
+        Located::Remote(url) => return Err(ApiError::Located(url)),
+    };
     let mut a = a.lock().await;
     match a
         .act(Action::Think {
@@ -333,9 +464,14 @@ async fn think(
 async fn remember(
     State(st): State<Arc<GatewayState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<RememberReq>,
 ) -> Result<Json<StatusResp>, ApiError> {
-    let a = st.agent(&id)?;
+    st.admit(&headers, Permission::Communicate, &id)?;
+    let a = match st.locate(&id, "/remember")? {
+        Located::Local(a) => a,
+        Located::Remote(url) => return Err(ApiError::Located(url)),
+    };
     let mut a = a.lock().await;
     let obj = SemanticObject {
         id: req.id,
@@ -355,9 +491,14 @@ async fn remember(
 async fn recall(
     State(st): State<Arc<GatewayState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<RecallReq>,
 ) -> Result<Json<Vec<Hit>>, ApiError> {
-    let a = st.agent(&id)?;
+    st.admit(&headers, Permission::Communicate, &id)?;
+    let a = match st.locate(&id, "/recall")? {
+        Located::Local(a) => a,
+        Located::Remote(url) => return Err(ApiError::Located(url)),
+    };
     let mut a = a.lock().await;
     match a
         .act(Action::Recall {
@@ -384,9 +525,14 @@ async fn recall(
 async fn invoke(
     State(st): State<Arc<GatewayState>>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(req): Json<InvokeReq>,
 ) -> Result<Json<OutputResp>, ApiError> {
-    let a = st.agent(&id)?;
+    st.admit(&headers, Permission::Communicate, &id)?;
+    let a = match st.locate(&id, "/invoke")? {
+        Located::Local(a) => a,
+        Located::Remote(url) => return Err(ApiError::Located(url)),
+    };
     let mut a = a.lock().await;
     match a
         .act(Action::Invoke {
@@ -406,14 +552,8 @@ async fn invoke(
     }
 }
 
-async fn audit(
-    State(st): State<Arc<GatewayState>>,
-    Path(id): Path<String>,
-) -> Result<Json<Vec<AuditEntry>>, ApiError> {
-    let a = st.agent(&id)?;
-    let a = a.lock().await;
-    let entries = a
-        .audit()
+fn audit_entries(a: &Agent) -> Vec<AuditEntry> {
+    a.audit()
         .iter()
         .map(|r| AuditEntry {
             op: format!("{:?}", r.op),
@@ -422,6 +562,55 @@ async fn audit(
             target: r.target.clone(),
             allowed: r.allowed,
         })
+        .collect()
+}
+
+async fn audit(
+    State(st): State<Arc<GatewayState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<AuditEntry>>, ApiError> {
+    st.admit(&headers, Permission::Communicate, &id)?;
+    let a = match st.locate(&id, "/audit")? {
+        Located::Local(a) => a,
+        Located::Remote(url) => return Err(ApiError::Located(url)),
+    };
+    let a = a.lock().await;
+    Ok(Json(audit_entries(&a)))
+}
+
+/// The cluster topology this gateway sees: its node id, peers, and which agents
+/// are local vs placed on a peer — proof that the door fronts a fleet.
+async fn cluster(State(st): State<Arc<GatewayState>>) -> Json<serde_json::Value> {
+    let local: Vec<String> = st.agents.lock().unwrap().keys().cloned().collect();
+    let remote = st.directory.lock().unwrap().clone();
+    let peers = st.peers.lock().unwrap().clone();
+    Json(serde_json::json!({
+        "node": st.node.0,
+        "require_caps": st.require_caps,
+        "local_agents": local,
+        "remote_agents": remote,
+        "peers": peers,
+    }))
+}
+
+/// Live I/O surface (Server-Sent Events): stream the agent's audit log as
+/// `audit` events. A finite snapshot today; a live tail (broadcast) is the next
+/// increment. Goes through the same admission + routing as every other surface.
+async fn events(
+    State(st): State<Arc<GatewayState>>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>>, ApiError> {
+    st.admit(&headers, Permission::Communicate, &id)?;
+    let a = match st.locate(&id, "/events")? {
+        Located::Local(a) => a,
+        Located::Remote(url) => return Err(ApiError::Located(url)),
+    };
+    let a = a.lock().await;
+    let events: Vec<Result<Event, axum::Error>> = audit_entries(&a)
+        .iter()
+        .map(|e| Event::default().event("audit").json_data(e))
         .collect();
-    Ok(Json(entries))
+    Ok(Sse::new(tokio_stream::iter(events)))
 }
