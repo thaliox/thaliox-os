@@ -15,8 +15,13 @@ pub mod agent;
 /// RFC-0003 §5 falsification gate for the MELD dataflow pillar
 /// (E4 dataflow-scheduled forward pass).
 pub mod experiment;
+/// M2 self-update with generational rollback.
+pub mod update;
 
 pub use agent::{Action, Agent, Outcome};
+pub use update::{
+    CheckpointHistory, GenStatus, Generation, UpdateError, UpdateOutcome, conclude_update,
+};
 
 use serde::{Deserialize, Serialize};
 use thaliox_core::{AgentId, AttentionBudget};
