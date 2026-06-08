@@ -10,6 +10,5 @@ description = "THALIOX fabric (L3) — agent↔agent vector transport, team orch
 [dependencies]
 thaliox-core.workspace = true
 async-trait.workspace = true
-
-[dev-dependencies]
 tokio = { workspace = true }
+serde_json.workspace = true

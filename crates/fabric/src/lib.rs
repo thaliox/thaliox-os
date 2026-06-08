@@ -11,6 +11,7 @@
 //! fidelity, via [`fidelity`]) on injection.
 
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -18,6 +19,8 @@ use thaliox_core::{
     AgentId, ModelFingerprint, Permission, Recipient, ResourceKind, TamError, VectorMessage,
     VectorPayload,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 
 /// Carries vector messages between agents.
 #[async_trait]
@@ -121,22 +124,7 @@ impl Endpoint {
 #[async_trait]
 impl Transport for Endpoint {
     async fn send(&self, msg: VectorMessage) -> Result<(), TamError> {
-        // INV-2: a cross-agent send MUST carry a capability granting `Communicate`
-        // over the recipient (an agent id or an intent group).
-        let target = match &msg.to {
-            Recipient::Unicast(id) => id.0.clone(),
-            Recipient::Multicast(g) => g.0.clone(),
-        };
-        let authorized = msg
-            .capability
-            .as_ref()
-            .is_some_and(|c| c.authorizes(Permission::Communicate, ResourceKind::Agent, &target));
-        if !authorized {
-            return Err(TamError::CapabilityDenied(format!(
-                "Communicate on {target}"
-            )));
-        }
-
+        authorize_communicate(&msg)?;
         match msg.to.clone() {
             Recipient::Unicast(id) => self.fabric.deliver(&id, msg),
             Recipient::Multicast(g) => {
@@ -179,6 +167,166 @@ pub fn fidelity(msg: &VectorMessage, receiver: &ModelFingerprint) -> Fidelity {
         VectorPayload::Raw { .. } => Fidelity::Unaligned,
         _ if msg.fingerprint.compatible_with(receiver) => Fidelity::Lossless,
         _ => Fidelity::NeedsTranslation,
+    }
+}
+
+/// INV-2: a cross-agent send must carry a capability granting `Communicate` over
+/// the recipient (an agent id or an intent group). Shared by the local and
+/// networked transports.
+fn authorize_communicate(msg: &VectorMessage) -> Result<(), TamError> {
+    let target = match &msg.to {
+        Recipient::Unicast(id) => id.0.as_str(),
+        Recipient::Multicast(g) => g.0.as_str(),
+    };
+    let ok = msg
+        .capability
+        .as_ref()
+        .is_some_and(|c| c.authorizes(Permission::Communicate, ResourceKind::Agent, target));
+    if ok {
+        Ok(())
+    } else {
+        Err(TamError::CapabilityDenied(format!(
+            "Communicate on {target}"
+        )))
+    }
+}
+
+// ---------- M4b: networked fabric over TCP (RFC-0006 §2-3) ----------
+
+fn io_err(e: std::io::Error) -> TamError {
+    TamError::Invalid(format!("net: {e}"))
+}
+
+/// A node in a networked cluster: local agents are routed in-process; remote
+/// agents are reached over TCP. Same `VectorMessage` wire (length-prefixed serde),
+/// so the flow is identical to [`LocalFabric`] — only the hop differs.
+#[derive(Clone, Default)]
+pub struct NetNode {
+    local: LocalFabric,
+    routes: Arc<Mutex<HashMap<AgentId, SocketAddr>>>,
+}
+
+impl NetNode {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a local agent and get its endpoint.
+    pub fn endpoint(&self, id: AgentId, fingerprint: ModelFingerprint) -> NetEndpoint {
+        self.local
+            .inboxes
+            .lock()
+            .unwrap()
+            .entry(id.clone())
+            .or_default();
+        NetEndpoint {
+            id,
+            fingerprint,
+            local: self.local.clone(),
+            routes: self.routes.clone(),
+        }
+    }
+
+    /// Record that a remote agent lives on the node listening at `addr`.
+    pub fn route(&self, remote: AgentId, addr: SocketAddr) {
+        self.routes.lock().unwrap().insert(remote, addr);
+    }
+
+    /// Bind a TCP listener and spawn an accept loop that delivers inbound
+    /// `VectorMessage`s to local inboxes. Returns the bound address.
+    pub async fn listen(&self, addr: SocketAddr) -> Result<SocketAddr, TamError> {
+        let listener = TcpListener::bind(addr).await.map_err(io_err)?;
+        let bound = listener.local_addr().map_err(io_err)?;
+        let local = self.local.clone();
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    continue;
+                };
+                let mut len = [0u8; 4];
+                if stream.read_exact(&mut len).await.is_err() {
+                    continue;
+                }
+                let n = u32::from_le_bytes(len) as usize;
+                let mut buf = vec![0u8; n];
+                if stream.read_exact(&mut buf).await.is_err() {
+                    continue;
+                }
+                if let Ok(msg) = serde_json::from_slice::<VectorMessage>(&buf)
+                    && let Recipient::Unicast(id) = msg.to.clone()
+                {
+                    local.deliver(&id, msg);
+                }
+            }
+        });
+        Ok(bound)
+    }
+}
+
+/// One agent's handle on a [`NetNode`]: sends locally or over TCP, receives from
+/// its local inbox.
+pub struct NetEndpoint {
+    id: AgentId,
+    fingerprint: ModelFingerprint,
+    local: LocalFabric,
+    routes: Arc<Mutex<HashMap<AgentId, SocketAddr>>>,
+}
+
+impl NetEndpoint {
+    pub fn id(&self) -> &AgentId {
+        &self.id
+    }
+    pub fn fingerprint(&self) -> &ModelFingerprint {
+        &self.fingerprint
+    }
+}
+
+#[async_trait]
+impl Transport for NetEndpoint {
+    async fn send(&self, msg: VectorMessage) -> Result<(), TamError> {
+        authorize_communicate(&msg)?;
+        let to = match &msg.to {
+            Recipient::Unicast(id) => id.clone(),
+            Recipient::Multicast(_) => {
+                return Err(TamError::Invalid(
+                    "multicast over the network is M4c".into(),
+                ));
+            }
+        };
+        // Local agent → in-process delivery. (Compute under the lock, release it,
+        // then deliver — `deliver` re-locks.)
+        let is_local = self.local.inboxes.lock().unwrap().contains_key(&to);
+        if is_local {
+            self.local.deliver(&to, msg);
+            return Ok(());
+        }
+        // Remote agent → TCP to its node (length-prefixed serde).
+        let addr = self
+            .routes
+            .lock()
+            .unwrap()
+            .get(&to)
+            .copied()
+            .ok_or_else(|| TamError::Invalid(format!("no route to {to}")))?;
+        let bytes = serde_json::to_vec(&msg).map_err(|e| TamError::Invalid(e.to_string()))?;
+        let mut stream = TcpStream::connect(addr).await.map_err(io_err)?;
+        stream
+            .write_all(&(bytes.len() as u32).to_le_bytes())
+            .await
+            .map_err(io_err)?;
+        stream.write_all(&bytes).await.map_err(io_err)?;
+        stream.flush().await.map_err(io_err)?;
+        Ok(())
+    }
+
+    async fn recv(&self) -> Result<VectorMessage, TamError> {
+        self.local
+            .inboxes
+            .lock()
+            .unwrap()
+            .get_mut(&self.id)
+            .and_then(|q| q.pop_front())
+            .ok_or_else(|| TamError::Invalid(format!("no message for {}", self.id)))
     }
 }
 
@@ -307,5 +455,49 @@ mod tests {
             bytes: b"hi".to_vec(),
         };
         assert_eq!(fidelity(&raw, &receiver), Fidelity::Unaligned);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn net_node_delivers_over_tcp() {
+        let node_a = NetNode::new();
+        let node_b = NetNode::new();
+        let a = node_a.endpoint(AgentId::new("a"), fp("m1"));
+        let b = node_b.endpoint(AgentId::new("b"), fp("m1"));
+
+        // B listens; A learns the route to B over TCP.
+        let addr_b = node_b.listen("127.0.0.1:0".parse().unwrap()).await.unwrap();
+        node_a.route(AgentId::new("b"), addr_b);
+
+        a.send(msg(
+            "a",
+            Recipient::Unicast(AgentId::new("b")),
+            "m1",
+            Some(comm_cap("a", "b")),
+        ))
+        .await
+        .unwrap();
+
+        // Delivery is async — poll the inbox briefly.
+        let mut got = None;
+        for _ in 0..100 {
+            if let Ok(m) = b.recv().await {
+                got = Some(m);
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(got.unwrap().from, AgentId::new("a"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn net_send_is_capability_gated() {
+        let node_a = NetNode::new();
+        let a = node_a.endpoint(AgentId::new("a"), fp("m1"));
+        node_a.route(AgentId::new("b"), "127.0.0.1:1".parse().unwrap());
+        // No capability → denied before any network hop.
+        let r = a
+            .send(msg("a", Recipient::Unicast(AgentId::new("b")), "m1", None))
+            .await;
+        assert!(matches!(r, Err(TamError::CapabilityDenied(_))));
     }
 }
