@@ -510,6 +510,83 @@ fn fc_migrate(fc_bin: &str, kernel: &str, workdir: &str) -> i32 {
     0
 }
 
+/// Host side (② cross-KVM-host migration): on the SOURCE host, launch a VM,
+/// deploy the demo agent (budget 100→95), pull its checkpoint over vsock, and
+/// write the portable Package to `out` (shipped to the other host out-of-band).
+fn fc_capture(fc_bin: &str, kernel: &str, rootfs: &str, workdir: &str, out: &str) -> i32 {
+    let deployer = FirecrackerDeploy::new(FirecrackerConfig::new(fc_bin, kernel, rootfs, workdir));
+    let vm = match deployer.launch() {
+        Ok(v) => v,
+        Err(e) => {
+            println!("launch failed: {e}");
+            return 1;
+        }
+    };
+    if let Err(e) = vm.deploy(&demo_package()) {
+        println!("deploy failed: {e}");
+        return 1;
+    }
+    let pkg = match vm.checkpoint() {
+        Ok(p) => p,
+        Err(e) => {
+            println!("checkpoint failed: {e}");
+            return 1;
+        }
+    };
+    let bytes = pkg.to_bytes();
+    if let Err(e) = std::fs::write(out, &bytes) {
+        println!("write {out} failed: {e}");
+        return 1;
+    }
+    println!(
+        "captured agent from in-VM checkpoint -> {out} ({} bytes)",
+        bytes.len()
+    );
+    let _ = vm.shutdown();
+    0
+}
+
+/// Host side (② cross-KVM-host migration): on the TARGET host, read a Package,
+/// launch a VM, and deploy the migrated agent into it — proving the state moved
+/// across hosts and microVMs (budget continues, not reset).
+fn fc_receive(fc_bin: &str, kernel: &str, rootfs: &str, workdir: &str, infile: &str) -> i32 {
+    let bytes = match std::fs::read(infile) {
+        Ok(b) => b,
+        Err(e) => {
+            println!("read {infile} failed: {e}");
+            return 1;
+        }
+    };
+    let pkg = match Package::from_bytes(&bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("package parse failed: {e}");
+            return 1;
+        }
+    };
+    let deployer = FirecrackerDeploy::new(FirecrackerConfig::new(fc_bin, kernel, rootfs, workdir));
+    let vm = match deployer.launch() {
+        Ok(v) => v,
+        Err(e) => {
+            println!("launch failed: {e}");
+            return 1;
+        }
+    };
+    match vm.deploy(&pkg) {
+        Ok(m) => println!("received migrated agent into a fresh VM -> {m}"),
+        Err(e) => {
+            println!("deploy failed: {e}");
+            return 1;
+        }
+    }
+    match vm.health() {
+        Ok(m) => println!("health -> {m}  (state migrated across hosts, not reset)"),
+        Err(e) => println!("health err: {e}"),
+    }
+    let _ = vm.shutdown();
+    0
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let parse_port = |i: usize| -> u32 {
@@ -544,6 +621,20 @@ fn main() {
             args.get(2).map(String::as_str).unwrap_or("firecracker"),
             args.get(3).map(String::as_str).unwrap_or("vmlinux"),
             args.get(4).map(String::as_str).unwrap_or("."),
+        ),
+        Some("fc-capture") => fc_capture(
+            args.get(2).map(String::as_str).unwrap_or("firecracker"),
+            args.get(3).map(String::as_str).unwrap_or("vmlinux"),
+            args.get(4).map(String::as_str).unwrap_or("rootfs.ext4"),
+            args.get(5).map(String::as_str).unwrap_or("."),
+            args.get(6).map(String::as_str).unwrap_or("agent.pkg"),
+        ),
+        Some("fc-receive") => fc_receive(
+            args.get(2).map(String::as_str).unwrap_or("firecracker"),
+            args.get(3).map(String::as_str).unwrap_or("vmlinux"),
+            args.get(4).map(String::as_str).unwrap_or("rootfs.ext4"),
+            args.get(5).map(String::as_str).unwrap_or("."),
+            args.get(6).map(String::as_str).unwrap_or("agent.pkg"),
         ),
         // Default in-VM (no recognized subcommand): config-drive at /dev/vdb.
         _ => run_drive("/dev/vdb"),
