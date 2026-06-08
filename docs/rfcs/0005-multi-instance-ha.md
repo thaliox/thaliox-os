@@ -133,7 +133,7 @@ M3 is where TAM §6 stops being a promise and becomes code.
 | Stage | Deliverable | CI-gated? |
 |---|---|---|
 | **M3a** ✅ | real `CognitiveState::merge` for `AgentState` (per-field CRDT) + `Checkpoint::merge` + law/no-loss tests. **Done** — `crates/runtime/src/agent.rs`. | ✅ pure software (in CI) |
-| **M3b** ✅ (in-process) | migration flow: capture → transfer → restore. **Done in-process** — `runtime::cluster` `Node` + `migrate` (stop-and-copy via the `Package` bytes), tests prove state survives + cutover + reversibility. Cross-Firecracker-host migration reuses the same flow over F3's vsock and is deferred to a KVM host. | ✅ in-process (in CI); self-hosted for VM |
+| **M3b** ✅ | migration flow: capture → transfer → restore. **Done in-process** — `runtime::cluster` `Node` + `migrate` (stop-and-copy via the `Package` bytes), tests prove state survives + cutover + reversibility. **Also validated across real microVMs** (`thaliox-runner fc-migrate`): pull a checkpoint from VM-A over vsock → deploy into a fresh VM-B → drain VM-A; budget continues 100→95→90, proving the state moved. Same flow runs cross-host with the bytes over the network. | ✅ in-process (CI) + self-hosted VM |
 | **M3c** ✅ | supervisor: registry + heartbeat + fenced self-healing takeover. **Done** — `runtime::supervisor` (`observe`/`tick`/`health`/`self_heal`/`reconcile`): detect → restore last good on a healthy node → flip registry; a returning split-brain is reconciled via the M3a CRDT merge. | ✅ in-process (in CI) |
 | **M3d** | (optional) pre-copy live migration to shrink downtime | later |
 
