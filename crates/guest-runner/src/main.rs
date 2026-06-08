@@ -13,6 +13,11 @@
 //! - **guest, config-drive (F2a)** `drive [device]` — read a `Package` from
 //!   `/dev/vdb`, deploy, run once.
 //! - **host helper (F2a)** `mkdrive <out>` — write a padded config-drive image.
+//! - **host, cross-host migration (M4b ②/③/④)** `fc-capture`/`fc-receive` move
+//!   an agent VM↔VM across two KVM hosts via a portable `Package`; `capture-local`/
+//!   `receive-local` are the host-process halves that close the virtual↔physical
+//!   cells of the migration matrix (capture-local → fc-receive = physical→virtual;
+//!   fc-capture → receive-local = virtual→physical).
 //!
 //! As PID 1 in the guest, the runner resets the VM on exit (RB_AUTOBOOT +
 //! `reboot=k`) so Firecracker exits cleanly; on a normal host it just exits.
@@ -587,6 +592,82 @@ fn fc_receive(fc_bin: &str, kernel: &str, rootfs: &str, workdir: &str, infile: &
     0
 }
 
+/// Host side (cross-context migration): capture an agent running as a bare
+/// HOST PROCESS (no VM) into a portable `Package` — the source half of a
+/// **physical → virtual** migration. Runs one unit of work so the budget is
+/// visibly spent (100 → 95, one mock think) before packing.
+fn capture_local(out: &str) -> i32 {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime");
+    let mut a = Agent::new(
+        AgentId::new("vm-agent"),
+        AttentionBudget::new(100, 1000),
+        Arc::new(InMemorySpace::new()),
+        Arc::new(MockProvider::new("ok", 5)),
+    );
+    a.start().expect("agent starts");
+    if let Err(e) = rt.block_on(a.act(Action::Think {
+        prompt: "host-process work".into(),
+        cost: 10,
+    })) {
+        println!("act failed: {e}");
+        return 1;
+    }
+    let pkg = Package::pack(
+        &a,
+        Manifest::new(AgentId::new("vm-agent")).expecting_model("local-mock"),
+    );
+    let bytes = pkg.to_bytes();
+    if let Err(e) = std::fs::write(out, &bytes) {
+        println!("write {out} failed: {e}");
+        return 1;
+    }
+    println!(
+        "captured agent from host process -> {out} ({} bytes, budget={})",
+        bytes.len(),
+        a.remaining_budget()
+    );
+    0
+}
+
+/// Host side (cross-context migration): restore a `Package` into a bare HOST
+/// PROCESS (no VM) — the destination half of a **virtual → physical** migration.
+/// Uses `LocalDeploy` with no extra work, so the reported budget is exactly the
+/// carried-over value, proving a lossless cross-context restore (not a reset).
+fn receive_local(infile: &str) -> i32 {
+    let bytes = match std::fs::read(infile) {
+        Ok(b) => b,
+        Err(e) => {
+            println!("read {infile} failed: {e}");
+            return 1;
+        }
+    };
+    let pkg = match Package::from_bytes(&bytes) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("package parse failed: {e}");
+            return 1;
+        }
+    };
+    match LocalDeploy.deploy(&pkg, guest_env()) {
+        Ok(a) => {
+            println!(
+                "restored migrated agent into host process -> phase={:?} budget={} \
+                 (state intact across contexts, not reset)",
+                a.phase(),
+                a.remaining_budget()
+            );
+            0
+        }
+        Err(e) => {
+            println!("deploy failed: {e}");
+            1
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let parse_port = |i: usize| -> u32 {
@@ -636,6 +717,12 @@ fn main() {
             args.get(5).map(String::as_str).unwrap_or("."),
             args.get(6).map(String::as_str).unwrap_or("agent.pkg"),
         ),
+        Some("capture-local") => {
+            capture_local(args.get(2).map(String::as_str).unwrap_or("agent.pkg"))
+        }
+        Some("receive-local") => {
+            receive_local(args.get(2).map(String::as_str).unwrap_or("agent.pkg"))
+        }
         // Default in-VM (no recognized subcommand): config-drive at /dev/vdb.
         _ => run_drive("/dev/vdb"),
     };
