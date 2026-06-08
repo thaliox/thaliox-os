@@ -9,6 +9,12 @@ description = "THALIOX fabric (L3) — agent↔agent vector transport, team orch
 
 [dependencies]
 thaliox-core.workspace = true
+# The cluster layer (L3) deploys/migrates agents, so it sits above the runtime (L2).
+thaliox-runtime.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true }
 serde_json.workspace = true
+
+[dev-dependencies]
+thaliox-cognition.workspace = true
+thaliox-memory.workspace = true

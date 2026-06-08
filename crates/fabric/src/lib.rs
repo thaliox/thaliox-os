@@ -19,6 +19,7 @@ use thaliox_core::{
     AgentId, ModelFingerprint, Permission, Recipient, ResourceKind, TamError, VectorMessage,
     VectorPayload,
 };
+use thaliox_runtime::{DeployEnv, DeployTarget, LocalDeploy, Node, Package};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -330,6 +331,71 @@ impl Transport for NetEndpoint {
     }
 }
 
+// ---------- M4b: networked migration (RFC-0005 §3 over the fabric) ----------
+
+/// Send an agent's `Package` to a remote node's migration listener over TCP, and
+/// wait for it to be accepted. The cross-host arm of M3's `migrate` — same
+/// `Package`, the bytes now crossing the network (RFC-0006 §3).
+pub async fn send_migration(addr: SocketAddr, package: &Package) -> Result<(), TamError> {
+    let bytes = package.to_bytes();
+    let mut s = TcpStream::connect(addr).await.map_err(io_err)?;
+    s.write_all(&(bytes.len() as u32).to_le_bytes())
+        .await
+        .map_err(io_err)?;
+    s.write_all(&bytes).await.map_err(io_err)?;
+    s.flush().await.map_err(io_err)?;
+    let mut ack = [0u8; 1];
+    s.read_exact(&mut ack).await.map_err(io_err)?;
+    if ack[0] == 1 {
+        Ok(())
+    } else {
+        Err(TamError::Invalid("remote rejected the migration".into()))
+    }
+}
+
+/// Listen for inbound migrations: receive a `Package`, deploy it with a freshly
+/// bound environment, and host it on `node`. `env` is a factory because each
+/// deploy binds its own memory/mind (RFC-0002 §3.4). Returns the bound address.
+pub async fn serve_migrations<E>(
+    node: Arc<Mutex<Node>>,
+    env: E,
+    addr: SocketAddr,
+) -> Result<SocketAddr, TamError>
+where
+    E: Fn() -> DeployEnv + Send + Sync + 'static,
+{
+    let listener = TcpListener::bind(addr).await.map_err(io_err)?;
+    let bound = listener.local_addr().map_err(io_err)?;
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                continue;
+            };
+            let mut len = [0u8; 4];
+            if stream.read_exact(&mut len).await.is_err() {
+                continue;
+            }
+            let n = u32::from_le_bytes(len) as usize;
+            let mut buf = vec![0u8; n];
+            if stream.read_exact(&mut buf).await.is_err() {
+                continue;
+            }
+            let ok = match Package::from_bytes(&buf) {
+                Ok(pkg) => match LocalDeploy.deploy(&pkg, env()) {
+                    Ok(agent) => {
+                        node.lock().unwrap().host(agent);
+                        true
+                    }
+                    Err(_) => false,
+                },
+                Err(_) => false,
+            };
+            let _ = stream.write_all(&[ok as u8]).await;
+        }
+    });
+    Ok(bound)
+}
+
 #[cfg(test)]
 mod tests {
     use thaliox_core::{CapabilityToken, Dtype, IntentGroup, MessageKind, Scope};
@@ -499,5 +565,55 @@ mod tests {
             .send(msg("a", Recipient::Unicast(AgentId::new("b")), "m1", None))
             .await;
         assert!(matches!(r, Err(TamError::CapabilityDenied(_))));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn migrate_a_package_over_the_network() {
+        use thaliox_cognition::MockProvider;
+        use thaliox_core::AttentionBudget;
+        use thaliox_memory::InMemorySpace;
+        use thaliox_runtime::{Action, Agent, Manifest};
+
+        // Source agent that did work → budget 95.
+        let mut a = Agent::new(
+            AgentId::new("a1"),
+            AttentionBudget::new(100, 1000),
+            Arc::new(InMemorySpace::new()),
+            Arc::new(MockProvider::new("ok", 5)),
+        );
+        a.start().unwrap();
+        a.act(Action::Think {
+            prompt: "w".into(),
+            cost: 5,
+        })
+        .await
+        .unwrap();
+        let pkg = Package::pack(&a, Manifest::new(AgentId::new("a1")));
+
+        // Destination node + its migration listener.
+        let dest = Arc::new(Mutex::new(Node::new("B")));
+        let env = || DeployEnv {
+            memory: Arc::new(InMemorySpace::new()),
+            mind: Arc::new(MockProvider::new("ok", 5)),
+            tools: vec![],
+            verifier: None,
+        };
+        let addr = serve_migrations(dest.clone(), env, "127.0.0.1:0".parse().unwrap())
+            .await
+            .unwrap();
+
+        // Migrate over TCP; the ack means it was deployed on the destination.
+        send_migration(addr, &pkg).await.unwrap();
+
+        let id = AgentId::new("a1");
+        for _ in 0..100 {
+            if dest.lock().unwrap().hosts(&id) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let node = dest.lock().unwrap();
+        let moved = node.agent(&id).expect("agent migrated to dest");
+        assert_eq!(moved.remaining_budget(), 95); // migrated state, not reset
     }
 }
