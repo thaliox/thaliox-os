@@ -16,8 +16,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use thaliox_core::{
-    AgentId, CapabilityToken, MessageKind, ModelFingerprint, Permission, Recipient, ResourceKind,
-    TamError, VectorMessage, VectorPayload,
+    AgentId, CapabilityToken, IntentGroup, MessageKind, ModelFingerprint, Permission, Recipient,
+    ResourceKind, TamError, VectorMessage, VectorPayload,
 };
 use thaliox_runtime::{
     Checkpoint, DeployEnv, DeployTarget, LocalDeploy, Node, NodeId, Package, Supervisor,
@@ -121,6 +121,10 @@ impl Endpoint {
     }
     pub fn fingerprint(&self) -> &ModelFingerprint {
         &self.fingerprint
+    }
+    /// Join a multicast intent group (used by the Swarm paradigm).
+    pub fn join(&self, group: &str) {
+        self.fabric.join(&self.id, group);
     }
 }
 
@@ -482,6 +486,10 @@ pub trait Stage: Send + Sync {
     async fn process(&self, msg: &VectorMessage) -> Result<VectorPayload, TamError>;
 }
 
+/// Fuses several payloads into one — a Hierarchy lead's aggregator or a Swarm's
+/// consensus function.
+type Fuse = Box<dyn Fn(&[VectorPayload]) -> VectorPayload + Send + Sync>;
+
 /// A [`Stage`] adapter over a plain synchronous transform — the common case and
 /// what tests use. Async stages (e.g. ones that call a model) implement [`Stage`]
 /// directly.
@@ -510,6 +518,24 @@ where
     async fn process(&self, msg: &VectorMessage) -> Result<VectorPayload, TamError> {
         Ok((self.f)(msg))
     }
+}
+
+/// **INV-3 guard**, shared by every paradigm: a stage/agent must not have a
+/// cross-`ModelFingerprint` aligned payload injected implicitly — it has to be
+/// marked `Translate` first. Returns an error naming the agent otherwise.
+fn inv3_guard(
+    msg: &VectorMessage,
+    receiver: &ModelFingerprint,
+    who: &AgentId,
+) -> Result<(), TamError> {
+    if matches!(fidelity(msg, receiver), Fidelity::NeedsTranslation)
+        && msg.kind != MessageKind::Translate
+    {
+        return Err(TamError::Invalid(format!(
+            "INV-3: {who} would inject a cross-fingerprint payload without translation"
+        )));
+    }
+    Ok(())
 }
 
 struct PipeStage {
@@ -581,16 +607,7 @@ impl Pipeline {
             let s = &self.stages[i];
 
             // INV-3: forbid implicit cross-fingerprint injection at this stage.
-            if matches!(
-                fidelity(&current, s.endpoint.fingerprint()),
-                Fidelity::NeedsTranslation
-            ) && current.kind != MessageKind::Translate
-            {
-                return Err(TamError::Invalid(format!(
-                    "INV-3: stage {} would inject a cross-fingerprint payload without translation",
-                    s.endpoint.id()
-                )));
-            }
+            inv3_guard(&current, s.endpoint.fingerprint(), s.endpoint.id())?;
 
             // The agent computes its output payload.
             let payload = s.stage.process(&current).await?;
@@ -613,6 +630,328 @@ impl Pipeline {
             current = self.stages[i + 1].endpoint.recv().await?;
         }
         unreachable!("returned at the last stage")
+    }
+}
+
+// ---------- M4c: the Hierarchy paradigm (RFC-0006 §4) ----------
+
+struct HierarchyChild {
+    stage: Box<dyn Stage>,
+    endpoint: Endpoint,
+    /// Capability the child reports back up to the lead with (INV-2).
+    cap_to_lead: Option<CapabilityToken>,
+}
+
+/// A team running the **Hierarchy** paradigm: a lead agent delegates the task to
+/// each child and aggregates their reports (RFC-0006 §4). Both legs — lead→child
+/// delegation and child→lead report — are capability-gated fabric hops (INV-2),
+/// and each child applies the INV-3 entry guard on what it is handed.
+pub struct Hierarchy {
+    name: String,
+    lead: Endpoint,
+    children: Vec<HierarchyChild>,
+    /// The lead's capability to delegate to its children (INV-2).
+    cap_to_child: Option<CapabilityToken>,
+    /// How the lead fuses the children's reports into its answer.
+    aggregate: Fuse,
+}
+
+impl Hierarchy {
+    pub fn new(
+        name: impl Into<String>,
+        lead: Endpoint,
+        cap_to_child: Option<CapabilityToken>,
+        aggregate: impl Fn(&[VectorPayload]) -> VectorPayload + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            lead,
+            children: Vec::new(),
+            cap_to_child,
+            aggregate: Box::new(aggregate),
+        }
+    }
+
+    /// Add a child agent that processes a delegated task and reports back.
+    pub fn child(
+        mut self,
+        stage: Box<dyn Stage>,
+        endpoint: Endpoint,
+        cap_to_lead: Option<CapabilityToken>,
+    ) -> Self {
+        self.children.push(HierarchyChild {
+            stage,
+            endpoint,
+            cap_to_lead,
+        });
+        self
+    }
+
+    /// The declarative [`Team`]: the lead first, then the children.
+    pub fn team(&self) -> Team {
+        let mut members = vec![self.lead.id().clone()];
+        members.extend(self.children.iter().map(|c| c.endpoint.id().clone()));
+        Team {
+            name: self.name.clone(),
+            members,
+            paradigm: Paradigm::Hierarchy,
+        }
+    }
+
+    /// Delegate `task` to every child, then return the lead's aggregated answer.
+    pub async fn run(&self, task: VectorMessage) -> Result<VectorMessage, TamError> {
+        let mut reports = Vec::with_capacity(self.children.len());
+        for child in &self.children {
+            // Lead delegates down (INV-2).
+            let mut down = task.clone();
+            down.from = self.lead.id().clone();
+            down.to = Recipient::Unicast(child.endpoint.id().clone());
+            down.capability = self.cap_to_child.clone();
+            self.lead.send(down).await?;
+
+            let got = child.endpoint.recv().await?;
+            inv3_guard(&got, child.endpoint.fingerprint(), child.endpoint.id())?;
+            let payload = child.stage.process(&got).await?;
+
+            // Child reports up (INV-2).
+            let mut up = got;
+            up.from = child.endpoint.id().clone();
+            up.fingerprint = child.endpoint.fingerprint().clone();
+            up.payload = payload;
+            up.to = Recipient::Unicast(self.lead.id().clone());
+            up.capability = child.cap_to_lead.clone();
+            child.endpoint.send(up).await?;
+            reports.push(self.lead.recv().await?.payload);
+        }
+        let mut answer = task;
+        answer.from = self.lead.id().clone();
+        answer.fingerprint = self.lead.fingerprint().clone();
+        answer.payload = (self.aggregate)(&reports);
+        Ok(answer)
+    }
+}
+
+// ---------- M4c: the Market paradigm (RFC-0006 §4) ----------
+
+/// A market participant: it bids a cost for a task (lower wins) and, if it wins
+/// the auction, executes it. Bidding and execution are separated so the
+/// auctioneer can compare costs before committing work.
+#[async_trait]
+pub trait Bidder: Send + Sync {
+    fn agent(&self) -> &AgentId;
+    /// Estimated cost to handle `task` — the lowest bid wins.
+    async fn bid(&self, task: &VectorMessage) -> Result<u64, TamError>;
+    /// Produce the result (only the winner is asked).
+    async fn execute(&self, task: &VectorMessage) -> Result<VectorPayload, TamError>;
+}
+
+const BID_CONTENT_TYPE: &str = "application/x-thaliox-bid";
+
+fn encode_bid(cost: u64) -> VectorPayload {
+    VectorPayload::Raw {
+        content_type: BID_CONTENT_TYPE.into(),
+        bytes: cost.to_le_bytes().to_vec(),
+    }
+}
+
+fn decode_bid(msg: &VectorMessage) -> Result<u64, TamError> {
+    match &msg.payload {
+        VectorPayload::Raw {
+            content_type,
+            bytes,
+        } if content_type == BID_CONTENT_TYPE && bytes.len() == 8 => {
+            Ok(u64::from_le_bytes(bytes.as_slice().try_into().unwrap()))
+        }
+        _ => Err(TamError::Invalid("malformed bid reply".into())),
+    }
+}
+
+struct MarketBidder {
+    bidder: Box<dyn Bidder>,
+    endpoint: Endpoint,
+    /// Capability the bidder replies to the auctioneer with (INV-2).
+    cap_to_auctioneer: Option<CapabilityToken>,
+}
+
+/// A team running the **Market** paradigm: an auctioneer announces a task, each
+/// bidder replies with a cost, and the lowest bidder is assigned the work
+/// (RFC-0006 §4). The task announcement and each bid reply are capability-gated
+/// fabric hops (INV-2).
+pub struct Market {
+    name: String,
+    auctioneer: Endpoint,
+    bidders: Vec<MarketBidder>,
+    /// The auctioneer's capability to announce to bidders (INV-2).
+    cap_to_bidder: Option<CapabilityToken>,
+}
+
+impl Market {
+    pub fn new(
+        name: impl Into<String>,
+        auctioneer: Endpoint,
+        cap_to_bidder: Option<CapabilityToken>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            auctioneer,
+            bidders: Vec::new(),
+            cap_to_bidder,
+        }
+    }
+
+    pub fn bidder(
+        mut self,
+        bidder: Box<dyn Bidder>,
+        endpoint: Endpoint,
+        cap_to_auctioneer: Option<CapabilityToken>,
+    ) -> Self {
+        self.bidders.push(MarketBidder {
+            bidder,
+            endpoint,
+            cap_to_auctioneer,
+        });
+        self
+    }
+
+    pub fn team(&self) -> Team {
+        let mut members = vec![self.auctioneer.id().clone()];
+        members.extend(self.bidders.iter().map(|b| b.endpoint.id().clone()));
+        Team {
+            name: self.name.clone(),
+            members,
+            paradigm: Paradigm::Market,
+        }
+    }
+
+    /// Run the auction: returns the winning agent and its result message.
+    pub async fn run(&self, task: VectorMessage) -> Result<(AgentId, VectorMessage), TamError> {
+        let mut best: Option<(usize, u64)> = None;
+        for (i, b) in self.bidders.iter().enumerate() {
+            // Announce the task to the bidder (INV-2).
+            let mut ann = task.clone();
+            ann.from = self.auctioneer.id().clone();
+            ann.to = Recipient::Unicast(b.endpoint.id().clone());
+            ann.capability = self.cap_to_bidder.clone();
+            self.auctioneer.send(ann).await?;
+
+            let req = b.endpoint.recv().await?;
+            let cost = b.bidder.bid(&req).await?;
+
+            // Bidder replies its bid over the fabric (INV-2).
+            let mut reply = req;
+            reply.from = b.endpoint.id().clone();
+            reply.to = Recipient::Unicast(self.auctioneer.id().clone());
+            reply.payload = encode_bid(cost);
+            reply.capability = b.cap_to_auctioneer.clone();
+            b.endpoint.send(reply).await?;
+
+            let got = self.auctioneer.recv().await?;
+            let bid = decode_bid(&got)?;
+            if best.is_none_or(|(_, c)| bid < c) {
+                best = Some((i, bid));
+            }
+        }
+        let (wi, _) = best.ok_or_else(|| TamError::Invalid("no bidders".into()))?;
+        let winner = &self.bidders[wi];
+        let payload = winner.bidder.execute(&task).await?;
+        let mut result = task;
+        result.from = winner.endpoint.id().clone();
+        result.fingerprint = winner.endpoint.fingerprint().clone();
+        result.payload = payload;
+        Ok((winner.bidder.agent().clone(), result))
+    }
+}
+
+// ---------- M4c: the Swarm paradigm (RFC-0006 §4) ----------
+
+struct SwarmPeer {
+    stage: Box<dyn Stage>,
+    endpoint: Endpoint,
+    /// Capability the peer broadcasts to the group with (INV-2).
+    cap_to_group: Option<CapabilityToken>,
+}
+
+/// A team running the **Swarm** paradigm: peers broadcast a proposal to a shared
+/// intent group and converge on an emergent consensus (RFC-0006 §4). Every
+/// broadcast is a capability-gated multicast (INV-2); proposals must share a
+/// `ModelFingerprint` to be fused (INV-3) — you cannot average across vector
+/// spaces without translation.
+pub struct Swarm {
+    name: String,
+    group: String,
+    peers: Vec<SwarmPeer>,
+    /// How the swarm fuses all proposals into a consensus payload.
+    consensus: Fuse,
+}
+
+impl Swarm {
+    pub fn new(
+        name: impl Into<String>,
+        group: impl Into<String>,
+        consensus: impl Fn(&[VectorPayload]) -> VectorPayload + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            group: group.into(),
+            peers: Vec::new(),
+            consensus: Box::new(consensus),
+        }
+    }
+
+    /// Add a peer; it joins the group immediately so it receives broadcasts.
+    pub fn peer(
+        mut self,
+        stage: Box<dyn Stage>,
+        endpoint: Endpoint,
+        cap_to_group: Option<CapabilityToken>,
+    ) -> Self {
+        endpoint.join(&self.group);
+        self.peers.push(SwarmPeer {
+            stage,
+            endpoint,
+            cap_to_group,
+        });
+        self
+    }
+
+    pub fn team(&self) -> Team {
+        Team {
+            name: self.name.clone(),
+            members: self.peers.iter().map(|p| p.endpoint.id().clone()).collect(),
+            paradigm: Paradigm::Swarm,
+        }
+    }
+
+    /// Each peer proposes (from `input`) and broadcasts to the group; the swarm
+    /// then fuses all proposals into a consensus message.
+    pub async fn run(&self, input: VectorMessage) -> Result<VectorMessage, TamError> {
+        if self.peers.is_empty() {
+            return Err(TamError::Invalid("empty swarm".into()));
+        }
+        // Each peer computes and broadcasts its proposal (INV-2 multicast).
+        for peer in &self.peers {
+            let proposal = peer.stage.process(&input).await?;
+            let mut out = input.clone();
+            out.from = peer.endpoint.id().clone();
+            out.fingerprint = peer.endpoint.fingerprint().clone();
+            out.payload = proposal;
+            out.to = Recipient::Multicast(IntentGroup(self.group.clone()));
+            out.capability = peer.cap_to_group.clone();
+            peer.endpoint.send(out).await?;
+        }
+        // Every peer is a group member, so peer[0]'s inbox now holds all
+        // proposals. Drain them, enforcing INV-3 (one shared vector space).
+        let reference = self.peers[0].endpoint.fingerprint().clone();
+        let mut proposals = Vec::with_capacity(self.peers.len());
+        while let Ok(m) = self.peers[0].endpoint.recv().await {
+            inv3_guard(&m, &reference, self.peers[0].endpoint.id())?;
+            proposals.push(m.payload);
+        }
+        let mut answer = input;
+        answer.from = self.peers[0].endpoint.id().clone();
+        answer.fingerprint = reference;
+        answer.payload = (self.consensus)(&proposals);
+        Ok(answer)
     }
 }
 
@@ -964,5 +1303,243 @@ mod tests {
         let mut translated = msg("c", Recipient::Unicast(AgentId::new("s1")), "m1", None);
         translated.kind = MessageKind::Translate;
         assert!(build().run(translated).await.is_ok());
+    }
+
+    // ---------- M4c: Hierarchy ----------
+
+    fn dense(val: u8) -> VectorPayload {
+        VectorPayload::Dense {
+            dtype: Dtype::Fp32,
+            dim: 4,
+            data: vec![val; 16],
+        }
+    }
+
+    /// A stage whose agent ignores its input and proposes a constant vector.
+    fn const_stage(id: &str, val: u8) -> Box<dyn Stage> {
+        Box::new(MapStage::new(AgentId::new(id), move |_: &VectorMessage| {
+            dense(val)
+        }))
+    }
+
+    /// Element-wise sum of `Dense` payloads (a stand-in aggregator).
+    fn sum_dense(parts: &[VectorPayload]) -> VectorPayload {
+        let mut acc = vec![0u8; 16];
+        for p in parts {
+            if let VectorPayload::Dense { data, .. } = p {
+                for (a, b) in acc.iter_mut().zip(data) {
+                    *a = a.wrapping_add(*b);
+                }
+            }
+        }
+        VectorPayload::Dense {
+            dtype: Dtype::Fp32,
+            dim: 4,
+            data: acc,
+        }
+    }
+
+    #[tokio::test]
+    async fn hierarchy_delegates_and_aggregates() {
+        let fab = LocalFabric::new();
+        let lead = fab.endpoint(AgentId::new("lead"), fp("m1"));
+        let c1 = fab.endpoint(AgentId::new("c1"), fp("m1"));
+        let c2 = fab.endpoint(AgentId::new("c2"), fp("m1"));
+        // Input bytes are 0; each child adds 1 → reports of 1; lead sums → 2.
+        let team = Hierarchy::new("h", lead, Some(comm_cap("lead", "*")), sum_dense)
+            .child(add_one("c1"), c1, Some(comm_cap("c1", "lead")))
+            .child(add_one("c2"), c2, Some(comm_cap("c2", "lead")));
+
+        let t = team.team();
+        assert_eq!(t.paradigm, Paradigm::Hierarchy);
+        assert_eq!(t.members[0], AgentId::new("lead"));
+
+        let out = team
+            .run(msg(
+                "client",
+                Recipient::Unicast(AgentId::new("lead")),
+                "m1",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(out.from, AgentId::new("lead"));
+        match out.payload {
+            VectorPayload::Dense { data, .. } => assert!(data.iter().all(|&b| b == 2)),
+            _ => panic!("expected dense"),
+        }
+    }
+
+    #[tokio::test]
+    async fn hierarchy_child_report_is_gated() {
+        let fab = LocalFabric::new();
+        let lead = fab.endpoint(AgentId::new("lead"), fp("m1"));
+        let c1 = fab.endpoint(AgentId::new("c1"), fp("m1"));
+        // Child's report capability targets "x", not "lead" → denied on report.
+        let team = Hierarchy::new("h", lead, Some(comm_cap("lead", "*")), sum_dense).child(
+            add_one("c1"),
+            c1,
+            Some(comm_cap("c1", "x")),
+        );
+        let r = team
+            .run(msg(
+                "client",
+                Recipient::Unicast(AgentId::new("lead")),
+                "m1",
+                None,
+            ))
+            .await;
+        assert!(matches!(r, Err(TamError::CapabilityDenied(_))));
+    }
+
+    // ---------- M4c: Market ----------
+
+    struct FlatBidder {
+        id: AgentId,
+        cost: u64,
+    }
+
+    #[async_trait]
+    impl Bidder for FlatBidder {
+        fn agent(&self) -> &AgentId {
+            &self.id
+        }
+        async fn bid(&self, _task: &VectorMessage) -> Result<u64, TamError> {
+            Ok(self.cost)
+        }
+        async fn execute(&self, _task: &VectorMessage) -> Result<VectorPayload, TamError> {
+            Ok(VectorPayload::Raw {
+                content_type: "text/plain".into(),
+                bytes: self.id.0.clone().into_bytes(),
+            })
+        }
+    }
+
+    fn flat(id: &str, cost: u64) -> Box<dyn Bidder> {
+        Box::new(FlatBidder {
+            id: AgentId::new(id),
+            cost,
+        })
+    }
+
+    #[tokio::test]
+    async fn market_lowest_bid_wins() {
+        let fab = LocalFabric::new();
+        let auct = fab.endpoint(AgentId::new("auct"), fp("m1"));
+        let b1 = fab.endpoint(AgentId::new("b1"), fp("m1"));
+        let b2 = fab.endpoint(AgentId::new("b2"), fp("m1"));
+        let market = Market::new("m", auct, Some(comm_cap("auct", "*")))
+            .bidder(flat("b1", 10), b1, Some(comm_cap("b1", "auct")))
+            .bidder(flat("b2", 3), b2, Some(comm_cap("b2", "auct")));
+
+        assert_eq!(market.team().paradigm, Paradigm::Market);
+
+        let (winner, result) = market
+            .run(msg(
+                "client",
+                Recipient::Unicast(AgentId::new("auct")),
+                "m1",
+                None,
+            ))
+            .await
+            .unwrap();
+        // b2 bid 3 < b1 bid 10 → b2 wins and executes.
+        assert_eq!(winner, AgentId::new("b2"));
+        assert_eq!(result.from, AgentId::new("b2"));
+        match result.payload {
+            VectorPayload::Raw { bytes, .. } => assert_eq!(bytes, b"b2"),
+            _ => panic!("expected raw result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn market_announce_is_gated() {
+        let fab = LocalFabric::new();
+        let auct = fab.endpoint(AgentId::new("auct"), fp("m1"));
+        let b1 = fab.endpoint(AgentId::new("b1"), fp("m1"));
+        // Auctioneer's announce capability targets "other", not bidder "b1".
+        let market = Market::new("m", auct, Some(comm_cap("auct", "other"))).bidder(
+            flat("b1", 1),
+            b1,
+            Some(comm_cap("b1", "auct")),
+        );
+        let r = market
+            .run(msg(
+                "c",
+                Recipient::Unicast(AgentId::new("auct")),
+                "m1",
+                None,
+            ))
+            .await;
+        assert!(matches!(r, Err(TamError::CapabilityDenied(_))));
+    }
+
+    // ---------- M4c: Swarm ----------
+
+    /// Element-wise integer mean of `Dense` payloads (the emergent consensus).
+    fn mean_dense(props: &[VectorPayload]) -> VectorPayload {
+        let n = props.len().max(1) as u32;
+        let mut sum = [0u32; 16];
+        for p in props {
+            if let VectorPayload::Dense { data, .. } = p {
+                for (a, b) in sum.iter_mut().zip(data) {
+                    *a += *b as u32;
+                }
+            }
+        }
+        VectorPayload::Dense {
+            dtype: Dtype::Fp32,
+            dim: 4,
+            data: sum.iter().map(|s| (s / n) as u8).collect(),
+        }
+    }
+
+    #[tokio::test]
+    async fn swarm_reaches_consensus() {
+        let fab = LocalFabric::new();
+        let p1 = fab.endpoint(AgentId::new("p1"), fp("m1"));
+        let p2 = fab.endpoint(AgentId::new("p2"), fp("m1"));
+        let p3 = fab.endpoint(AgentId::new("p3"), fp("m1"));
+        // Proposals 2, 4, 6 → mean 4.
+        let swarm = Swarm::new("s", "flock", mean_dense)
+            .peer(const_stage("p1", 2), p1, Some(comm_cap("p1", "flock")))
+            .peer(const_stage("p2", 4), p2, Some(comm_cap("p2", "flock")))
+            .peer(const_stage("p3", 6), p3, Some(comm_cap("p3", "flock")));
+
+        assert_eq!(swarm.team().paradigm, Paradigm::Swarm);
+
+        let out = swarm
+            .run(msg(
+                "seed",
+                Recipient::Unicast(AgentId::new("p1")),
+                "m1",
+                None,
+            ))
+            .await
+            .unwrap();
+        match out.payload {
+            VectorPayload::Dense { data, .. } => assert!(data.iter().all(|&b| b == 4)),
+            _ => panic!("expected dense consensus"),
+        }
+    }
+
+    #[tokio::test]
+    async fn swarm_broadcast_is_gated() {
+        let fab = LocalFabric::new();
+        let p1 = fab.endpoint(AgentId::new("p1"), fp("m1"));
+        let p2 = fab.endpoint(AgentId::new("p2"), fp("m1"));
+        // p1's broadcast capability targets the wrong group → denied.
+        let swarm = Swarm::new("s", "flock", mean_dense)
+            .peer(const_stage("p1", 2), p1, Some(comm_cap("p1", "wrong")))
+            .peer(const_stage("p2", 4), p2, Some(comm_cap("p2", "flock")));
+        let r = swarm
+            .run(msg(
+                "seed",
+                Recipient::Unicast(AgentId::new("p1")),
+                "m1",
+                None,
+            ))
+            .await;
+        assert!(matches!(r, Err(TamError::CapabilityDenied(_))));
     }
 }
