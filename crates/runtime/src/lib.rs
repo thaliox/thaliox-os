@@ -15,10 +15,13 @@ pub mod agent;
 /// RFC-0003 §5 falsification gate for the MELD dataflow pillar
 /// (E4 dataflow-scheduled forward pass).
 pub mod experiment;
+/// M2 packaging & one-click deployment (software target; Firecracker later).
+pub mod package;
 /// M2 self-update with generational rollback.
 pub mod update;
 
 pub use agent::{Action, Agent, Outcome};
+pub use package::{DeployEnv, DeployTarget, LocalDeploy, Manifest, Package, PackageError};
 pub use update::{
     CheckpointHistory, GenStatus, Generation, UpdateError, UpdateOutcome, conclude_update,
 };
