@@ -123,7 +123,7 @@ Implements `DeployTarget` (RFC-0002 §4). `deploy(package, env)`:
 | Stage | Deliverable |
 |---|---|
 | **F2a** ✅ | guest `agent-runner` (Rust): read `Package` from config-drive → `LocalDeploy` → run agent; baked into an ext4 rootfs. **Done — validated in-VM on the KVM host**: a 1.3 MiB static-musl runner boots as PID 1, reads `/dev/vdb`, deploys the agent (phase `Live`, budget 100), runs a `Think`, re-checkpoints, and resets so Firecracker exits cleanly in ~2 s. (`crates/guest-runner`; cognition `remote` feature gated off for the offline build.) |
-| **F2b** | swap the channel to **vsock**: runner serves `health` / `checkpoint` / `shutdown`; host sends the `Package` and pulls a checkpoint back. |
+| **F2b** ✅ | swap the channel to **vsock**: runner serves `health` / `checkpoint` / `shutdown`; host sends the `Package` and pulls a checkpoint back. **Done — validated in-VM**: guest listens on `AF_VSOCK` (raw libc); host drives deploy → health → checkpoint → shutdown over Firecracker's vsock UDS. The host sends a fresh agent (budget 100), the guest runs a `Think` (→ 95), and both `health` and the pulled-back checkpoint report 95 — **guest-level state continuity proven**, closing the F2a gap. Shutdown over vsock resets the VM. |
 | **F3** | host-side `FirecrackerDeploy: DeployTarget` (feature-gated) + `MicroVm` handle; self-hosted integration test: deploy a `Package` → agent runs in-VM → checkpoint back → bytes match. |
 | **F4** | fast hibernate/resume via Firecracker VM snapshot on the `MicroVm` handle (perf layer). |
 
@@ -162,7 +162,7 @@ truncate -s 1G rootfs.ext4 && mkfs.ext4 -F -d squashfs-root rootfs.ext4
 
 ## 11. Open questions
 
-1. vsock framing for the `Package` — length-prefixed raw bytes, or a tiny request/response protocol (`health` / `checkpoint` / `shutdown` as typed messages)?
+1. ~~vsock framing for the `Package`~~ — **resolved (F2b)**: a tiny typed protocol `[op: u8][len: u64 LE][payload]`, one request/response per connection (`Deploy` / `Health` / `Checkpoint` / `Shutdown`).
 2. rootfs strategy — one shared read-only base + per-agent overlay/CoW, vs a built image per deploy? (CoW wins for density; needs an overlay-init in the guest.)
 3. `jailer` from day one, or bare `firecracker` until F3 hardening?
 4. how does a Firecracker VM snapshot (F4) coexist with the agent checkpoint when both exist — precedence on resume?
