@@ -5,15 +5,22 @@
 //! model may decide to call a [`ToolSpec`] and the runtime executes it, closing
 //! the cognition → tools → memory loop. Token usage feeds the attention budget.
 
+/// Remote LLM backends (Anthropic). Gated by the `remote` feature so offline
+/// builds (e.g. the guest agent-runner) need not pull `reqwest`.
+#[cfg(feature = "remote")]
 pub mod anthropic;
 /// RFC-0003 §5 falsification gates for the MELD pillars (E1 mergeable cognition,
 /// E2 energy-based readout).
 pub mod experiment;
+/// Remote LLM backends (OpenAI-compatible). Gated by the `remote` feature.
+#[cfg(feature = "remote")]
 pub mod openai;
 /// The Model-State Contract (RFC-0002 §4) — recoverable state as an OS object.
 pub mod state;
 
+#[cfg(feature = "remote")]
 pub use anthropic::AnthropicProvider;
+#[cfg(feature = "remote")]
 pub use openai::OpenAiProvider;
 pub use state::{CognitiveState, StateError};
 

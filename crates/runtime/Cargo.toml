@@ -7,9 +7,15 @@ repository.workspace = true
 homepage.workspace = true
 description = "THALIOX runtime (L2) — agent execution unit, lifecycle, attention-budget scheduling, checkpoints"
 
+[features]
+default = ["remote"]
+# Forwards to cognition's remote backends. On by default so examples/consumers
+# are unchanged; the guest agent-runner disables it for an offline build.
+remote = ["thaliox-cognition/remote"]
+
 [dependencies]
 thaliox-core.workspace = true
-thaliox-cognition.workspace = true
+thaliox-cognition = { path = "../cognition", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
 

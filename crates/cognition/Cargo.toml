@@ -7,8 +7,14 @@ repository.workspace = true
 homepage.workspace = true
 description = "THALIOX cognition (L1) — unified LLM interface: remote backends (Anthropic/OpenAI) + local offline"
 
+[features]
+default = ["remote"]
+# Remote LLM backends (Anthropic / OpenAI) — pulls reqwest. Off for offline
+# builds like the guest agent-runner.
+remote = ["dep:reqwest"]
+
 [dependencies]
 thaliox-core.workspace = true
 async-trait.workspace = true
 serde_json.workspace = true
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
