@@ -102,6 +102,31 @@ impl Package {
         }
         Ok(pkg)
     }
+
+    /// Frame the package for a one-way **config-drive** (RFC-0004 §4, F2a): an
+    /// 8-byte little-endian length prefix followed by the JSON body. Written to a
+    /// raw block image on the host, read back from `/dev/vdb` in the guest — the
+    /// length prefix lets the reader ignore the drive's trailing zero padding.
+    pub fn to_config_drive(&self) -> Vec<u8> {
+        let body = self.to_bytes();
+        let mut out = (body.len() as u64).to_le_bytes().to_vec();
+        out.extend_from_slice(&body);
+        out
+    }
+
+    /// Parse a config-drive frame (length-prefixed) from raw device/file bytes.
+    pub fn from_config_drive(bytes: &[u8]) -> Result<Self, PackageError> {
+        let len_buf: [u8; 8] = bytes
+            .get(..8)
+            .ok_or_else(|| PackageError::Decode("config-drive shorter than 8 bytes".into()))?
+            .try_into()
+            .expect("slice of len 8");
+        let len = u64::from_le_bytes(len_buf) as usize;
+        let body = bytes
+            .get(8..8 + len)
+            .ok_or_else(|| PackageError::Decode("config-drive truncated".into()))?;
+        Package::from_bytes(body)
+    }
 }
 
 /// The concrete environment a host binds when launching a package.
@@ -251,6 +276,25 @@ mod tests {
         let restored = Package::from_bytes(&pkg.to_bytes()).unwrap();
         assert_eq!(restored.manifest, pkg.manifest);
         assert_eq!(restored.checkpoint.state, pkg.checkpoint.state);
+    }
+
+    #[test]
+    fn config_drive_round_trips_with_padding() {
+        let pkg = Package::pack(&agent(), Manifest::new(AgentId::new("a1")));
+        // Simulate a raw block device: frame + trailing zero padding.
+        let mut drive = pkg.to_config_drive();
+        drive.resize(drive.len() + 4096, 0);
+        let restored = Package::from_config_drive(&drive).unwrap();
+        assert_eq!(restored.checkpoint.state, pkg.checkpoint.state);
+        assert_eq!(restored.manifest, pkg.manifest);
+    }
+
+    #[test]
+    fn from_config_drive_rejects_short_input() {
+        assert!(matches!(
+            Package::from_config_drive(&[0, 1, 2]),
+            Err(PackageError::Decode(_))
+        ));
     }
 
     #[test]

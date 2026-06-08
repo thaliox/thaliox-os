@@ -1,0 +1,20 @@
+[package]
+name = "thaliox-guest-runner"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "THALIOX guest agent-runner — runs an agent inside a Firecracker microVM (RFC-0004 F2a)"
+
+[[bin]]
+name = "thaliox-runner"
+path = "src/main.rs"
+
+[dependencies]
+thaliox-core.workspace = true
+thaliox-runtime.workspace = true
+thaliox-cognition.workspace = true
+thaliox-memory.workspace = true
+tokio = { workspace = true }
+libc.workspace = true
