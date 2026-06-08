@@ -133,6 +133,14 @@ Each stage is independently demonstrable on the §10 host.
 
 ## 10. Appendix — host provisioning runbook (validated 2026-06-08)
 
+> **One-shot, reproducible:** [`tools/fc-host-setup.sh`](../../tools/fc-host-setup.sh) does
+> everything below (KVM precheck → packages → pinned firecracker v1.16 + kernel 5.10.245 +
+> ubuntu-24.04 rootfs → ext4) and prints the runner-deploy + validation steps. The
+> Firecracker host is **opportunistic** — a KVM box can be released when idle and
+> re-provisioned with this script when real-microVM integration is needed; nothing is lost
+> (the runner is rebuilt from source, kernel/rootfs re-downloaded). After re-provisioning,
+> update `memory/firecracker-host-thailand.md` with the new host.
+
 Host: bare-metal, x86_64, `/dev/kvm` present (Intel VT-x), 96 cores / 375 GiB, Debian 11 (kernel 5.10), **3 TB NVMe at `/mnt/data`** — put all VM images, snapshots, and build artifacts there. github + S3 reachable directly (no mirror).
 
 ```sh
