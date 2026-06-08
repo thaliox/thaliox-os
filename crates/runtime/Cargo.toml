@@ -12,6 +12,9 @@ default = ["remote"]
 # Forwards to cognition's remote backends. On by default so examples/consumers
 # are unchanged; the guest agent-runner disables it for an offline build.
 remote = ["thaliox-cognition/remote"]
+# Host-side Firecracker launch target (RFC-0004 F3). std-only; self-hosted
+# integration only (needs a KVM host), so it is off by default and out of CI.
+firecracker = []
 
 [dependencies]
 thaliox-core.workspace = true

@@ -27,40 +27,14 @@ use std::time::Duration;
 use thaliox_cognition::MockProvider;
 use thaliox_core::{AgentId, AttentionBudget};
 use thaliox_memory::InMemorySpace;
+use thaliox_runtime::vmproto::{op, read_frame, write_frame};
 use thaliox_runtime::{
-    Action, Agent, DeployEnv, DeployTarget, LocalDeploy, Manifest, Outcome, Package,
+    Action, Agent, DeployEnv, DeployTarget, FirecrackerConfig, FirecrackerDeploy, LocalDeploy,
+    Manifest, Outcome, Package,
 };
 
 /// Default vsock port the guest runner listens on.
 const DEFAULT_PORT: u32 = 1024;
-
-// ----- shared framing: [op: u8][len: u64 LE][payload] -----
-
-mod op {
-    pub const DEPLOY: u8 = 1;
-    pub const HEALTH: u8 = 2;
-    pub const CHECKPOINT: u8 = 3;
-    pub const SHUTDOWN: u8 = 4;
-    pub const OK: u8 = 0;
-    pub const ERR: u8 = 1;
-}
-
-fn write_frame<W: Write>(w: &mut W, tag: u8, payload: &[u8]) -> io::Result<()> {
-    w.write_all(&[tag])?;
-    w.write_all(&(payload.len() as u64).to_le_bytes())?;
-    w.write_all(payload)?;
-    w.flush()
-}
-
-fn read_frame<R: Read>(r: &mut R) -> io::Result<(u8, Vec<u8>)> {
-    let mut tag = [0u8; 1];
-    r.read_exact(&mut tag)?;
-    let mut len = [0u8; 8];
-    r.read_exact(&mut len)?;
-    let mut buf = vec![0u8; u64::from_le_bytes(len) as usize];
-    r.read_exact(&mut buf)?;
-    Ok((tag[0], buf))
-}
 
 // ----- the demo agent / package (shared by host helpers) -----
 
@@ -369,6 +343,47 @@ fn make_drive(out: &str) -> i32 {
     }
 }
 
+/// Host side (F3): launch a Firecracker microVM via the Rust `FirecrackerDeploy`
+/// API, deploy the demo agent over vsock, pull a checkpoint, and shut down.
+fn fc_launch(fc_bin: &str, kernel: &str, rootfs: &str, workdir: &str) -> i32 {
+    let cfg = FirecrackerConfig::new(fc_bin, kernel, rootfs, workdir);
+    let vm = match FirecrackerDeploy::new(cfg).launch() {
+        Ok(v) => v,
+        Err(e) => {
+            println!("launch failed: {e}");
+            return 1;
+        }
+    };
+    let pkg = demo_package();
+    match vm.deploy(&pkg) {
+        Ok(m) => println!("deploy     -> {m}"),
+        Err(e) => {
+            println!(
+                "deploy failed: {e} (console: {})",
+                vm.console_path().display()
+            );
+            return 1;
+        }
+    }
+    match vm.health() {
+        Ok(m) => println!("health     -> {m}"),
+        Err(e) => println!("health err: {e}"),
+    }
+    match vm.checkpoint() {
+        Ok(p) => println!(
+            "checkpoint -> pulled package for {:?} ({} bytes)",
+            p.manifest.agent.0,
+            p.to_bytes().len()
+        ),
+        Err(e) => println!("checkpoint err: {e}"),
+    }
+    match vm.shutdown() {
+        Ok(()) => println!("shutdown   -> ok (firecracker exited)"),
+        Err(e) => println!("shutdown err: {e}"),
+    }
+    0
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let parse_port = |i: usize| -> u32 {
@@ -387,6 +402,12 @@ fn main() {
         ),
         Some("drive") => run_drive(args.get(2).map(String::as_str).unwrap_or("/dev/vdb")),
         Some("mkdrive") => make_drive(args.get(2).map(String::as_str).unwrap_or("package.img")),
+        Some("fc-launch") => fc_launch(
+            args.get(2).map(String::as_str).unwrap_or("firecracker"),
+            args.get(3).map(String::as_str).unwrap_or("vmlinux"),
+            args.get(4).map(String::as_str).unwrap_or("rootfs.ext4"),
+            args.get(5).map(String::as_str).unwrap_or("."),
+        ),
         // Default in-VM (no recognized subcommand): config-drive at /dev/vdb.
         _ => run_drive("/dev/vdb"),
     };

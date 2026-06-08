@@ -15,12 +15,19 @@ pub mod agent;
 /// RFC-0003 §5 falsification gate for the MELD dataflow pillar
 /// (E4 dataflow-scheduled forward pass).
 pub mod experiment;
+/// M2/F3 Firecracker microVM launch target (RFC-0004). Feature-gated.
+#[cfg(feature = "firecracker")]
+pub mod firecracker;
 /// M2 packaging & one-click deployment (software target; Firecracker later).
 pub mod package;
 /// M2 self-update with generational rollback.
 pub mod update;
+/// Host ↔ in-VM control protocol (RFC-0004 §4) — shared with the guest-runner.
+pub mod vmproto;
 
 pub use agent::{Action, Agent, Outcome};
+#[cfg(feature = "firecracker")]
+pub use firecracker::{FcError, FirecrackerConfig, FirecrackerDeploy, MicroVm};
 pub use package::{DeployEnv, DeployTarget, LocalDeploy, Manifest, Package, PackageError};
 pub use update::{
     CheckpointHistory, GenStatus, Generation, UpdateError, UpdateOutcome, conclude_update,

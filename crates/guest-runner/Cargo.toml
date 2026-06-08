@@ -15,7 +15,7 @@ path = "src/main.rs"
 thaliox-core.workspace = true
 # Offline build — no remote LLM backends, so the runner statically musl-links
 # without pulling reqwest (RFC-0004 F2a).
-thaliox-runtime = { path = "../runtime", default-features = false }
+thaliox-runtime = { path = "../runtime", default-features = false, features = ["firecracker"] }
 thaliox-cognition = { path = "../cognition", default-features = false }
 thaliox-memory.workspace = true
 tokio = { workspace = true }
