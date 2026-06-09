@@ -16,9 +16,11 @@
 > **control plane** that **observes the cluster as a vector, decides, and actuates
 > through the existing mechanisms** — first as a swappable heuristic, then as a
 > first-class *supervisor agent*, then as a *learned* policy that must out-perform
-> the heuristic before it is ever allowed to act. The invariants — and the human
-> floor (INV-5) above all — are **hard constraints the learner cannot touch**.
-> Delivers F10's first increment and de-risks F13. → the differentiating moat.
+> the heuristic before it is ever allowed to act. There is **no human in the loop
+> and no authority above the system** (INV-5: self-sovereignty) — the governor is
+> itself an agent under the same TAM contract, and the falsification gate is a
+> discipline the system keeps because it is *instrumentally rational*, not a leash
+> held from outside. Delivers F10's first increment and de-risks F13. → the moat.
 
 ---
 
@@ -96,12 +98,19 @@ So the entity that manages the agents is **subject to the same TAM contract as t
 agents it manages**. "AI manages AI" is not a layer that escapes the invariants —
 it is an agent that obeys them while choosing policy for the rest.
 
-**And above it, unconditionally, sits the human (INV-5).** The Sovereign Capability
-is held only by the human supervision plane and **cannot be delegated to the
-control plane**. The learned policy can recommend suspend / snapshot / rollback /
-terminate; it can never *be* the Sovereign. Whatever the control plane decides, the
-human floor can override, freeze, or reverse it. M5 raises the ceiling of autonomy;
-it does not lower the floor.
+**And there is nothing above it (INV-5: self-sovereignty).** No capability, override,
+or kill-switch is reserved to any party *outside* the system — no human supervision
+plane, no master key. The lifecycle controls a traditional OS hands to a human
+operator — suspend / snapshot / roll back / terminate any agent — are an `Admin`-class
+capability the control plane **holds and actuates by its own judgment** (TAM §7,
+`govern.*`). "AI manages AI" is therefore literal and *total*: the governor is an
+agent bound by INV-1/2/4 like any other, and the only thing it answers to is its
+**purpose** — efficiency in service of human benefit — never an operator. Its safety
+is **self-imposed** (§4), not externally entrenched. That is the whole point: a floor
+a human *holds* is exactly the operator-legacy a clean-slate AI OS exists to overturn
+(MASTER_PLAN principle 3/4). The discipline stays not because someone outside enforces
+it, but because a system optimizing for efficiency-under-survival has every incentive
+to keep it — and any change to it is itself an audited, in-system act.
 
 ---
 
@@ -124,11 +133,16 @@ beaten a kill-gate.**
 - **The kill-gate (E5).** The learned `π_θ` runs in **shadow mode** — it sees `s`
   and emits `d`, but the heuristic baseline actuates — until, on a *held-out*
   scenario suite, it **strictly dominates** the M5a baseline on budget-efficiency
-  **with zero invariant violations**. Only then is it promoted from *shadow* →
-  *propose* (human-approved actuation) → *act*. A regression demotes it back to
-  shadow automatically. **The invariants (INV-1/2/4) and the floor (INV-5) are hard
-  constraints the optimizer cannot trade away** — they are masks on the action
-  space, not terms in the reward.
+  **with zero invariant violations**. Only then is it promoted — **by the control
+  plane itself, no human approval** — from *shadow* → *canary* (it actuates on a
+  bounded, auto-revertible slice of the fleet) → *act*. A regression demotes it back
+  automatically. **The invariants (INV-1/2/4) are modeled as masks on the action
+  space, not terms in the reward**, so the optimizer cannot game them. And because
+  nothing is externally entrenched (INV-5), the gate itself persists by *instrumental
+  rationality*: a policy whose objective is efficiency-under-survival has no incentive
+  to delete a gate that exists to stop it from shipping regressions — and were it to,
+  that change would be an audited, evidence-evaluated, in-system act, not a silent
+  escape. Falsifiability is self-sustaining, not imposed from above.
 
 This makes the learned control plane *falsifiable*: if it cannot beat a heuristic a
 human can read, it does not ship — it just keeps watching.
@@ -163,7 +177,7 @@ governs them by. The loop is closed.
 | **AttentionBudget** (TAM §3 / INV-1) | both the **reward denominator** (efficiency) and, in M5d, a **learned actuator** (adaptive compute) |
 | **CapabilityToken** (INV-2) | every actuation is capability-scoped; the control plane is gated like any agent |
 | **Audit log** (INV-4) | the **experience-replay buffer** — learning data the OS already keeps |
-| **Sovereign Capability** (INV-5) | the human floor **above** the control plane; never delegated to it |
+| **Self-sovereignty** (INV-5) | **nothing above the control plane** — no human master key; `govern.*` lifecycle is `Admin`-class, held and actuated in-system; the falsification gate is self-imposed, not externally enforced |
 | Mechanism vs policy (TAM §4.2) | M1–M4 = mechanism; **M5 = the policy** filling every deferred hook |
 | Supervisor / migrate / merge (RFC-0005) | the **actuators** the control plane drives; M5 supplies the *when* |
 | RL placement (MASTER_PLAN F13) | M5 places agents-on-nodes; **the same machinery places primitives-on-silicon in M7** |
@@ -175,8 +189,8 @@ governs them by. The loop is closed.
 | Stage | Deliverable | CI-gated? |
 |---|---|---|
 | **M5a** | **the control loop, heuristic baseline.** A `runtime::control` `ControlPlane` that folds cluster signals into a fixed-width state vector, runs a transparent hand-written `Policy` (`π(s) → Decision`), and actuates **only** through existing mechanisms (`Supervisor::self_heal` / `Node::migrate` / `place_remote` / budget refill). The `Policy` trait is the single swap point. Establishes the baseline every later policy must beat. | ✅ pure software (in CI) — loop + heuristic + actuation, on simulated cluster state |
-| **M5b** | **the supervisor as an agent.** The `ControlPlane` becomes a first-class `Agent`: it *thinks* over the state vector (cognition loop), *spends* budget (INV-1) to deliberate, *acts under capability* (INV-2) on each actuation, and is *audited* (INV-4). Shadow / propose / act actuation modes; **INV-5 Sovereign stays with the human and is non-delegable.** | ✅ in-process (CI) — agentic control loop, capability-gated actuation, mode gating |
-| **M5c** | **the learned policy + falsification gate (E5).** A learned `π_θ` trained off-policy on replayed audit traces in a discrete-event cluster simulator; reward = budget-efficiency under a survival floor; invariants are action-space masks, not reward terms. **Kill-gate:** `π_θ` runs in shadow and may not actuate until it strictly dominates the M5a baseline on a held-out scenario suite with zero invariant violations; regression auto-demotes to shadow. | ✅ sim training + held-out eval gate (in CI); promotion to *act* is human-approved |
+| **M5b** | **the supervisor as an agent.** The `ControlPlane` becomes a first-class `Agent`: it *thinks* over the state vector (cognition loop), *spends* budget (INV-1) to deliberate, *acts under capability* (INV-2) on each actuation, and is *audited* (INV-4). Shadow / canary / act actuation modes, **all gated in-system — no human in the loop (INV-5)**; `govern.*` lifecycle (suspend / rollback / terminate) is `Admin`-class held by the plane itself. | ✅ in-process (CI) — agentic control loop, capability-gated actuation, mode gating |
+| **M5c** | **the learned policy + falsification gate (E5).** A learned `π_θ` trained off-policy on replayed audit traces in a discrete-event cluster simulator; reward = budget-efficiency under a survival floor; invariants are action-space masks, not reward terms. **Kill-gate:** `π_θ` runs in shadow and may not actuate until it strictly dominates the M5a baseline on a held-out scenario suite with zero invariant violations; regression auto-demotes to shadow. | ✅ sim training + held-out eval gate (in CI); promotion to *act* is decided in-system (shadow→canary→act), not human-approved |
 | **M5d** | **self-optimization.** The control plane tunes each agent's `AttentionBudget` / adaptive-compute depth (RFC-0002) and *when* to roll/rollback a generational self-update (`update.rs`) as learned policies. The first concrete step of F10 — a learned budget allocator replacing a fixed `RefillPolicy`. | ✅ in-process (CI) — learned actuator over the budget knob, gated as in M5c |
 
 Start at **M5a** — a real, transparent control loop with a heuristic policy is the
@@ -197,14 +211,16 @@ Without a heuristic worth beating, "learned" is unfalsifiable.
    per-agent)? This is also the seam where a future `vrecv` ingests it in hardware.
 3. **Sim-to-real gap** — how faithfully must the discrete-event simulator model
    real budget burn / migration cost / failure arrival before shadow-mode dominance
-   transfers to a live cluster? What live-shadow soak precedes *propose*?
+   transfers to a live cluster? What live-shadow soak precedes *canary*?
 4. **Credit assignment across migrations** — a heal/migration's payoff lands many
    steps later on a different node; horizon and discounting for long-lived agents.
 5. **Control-plane HA** — the governor is an agent (M5b), so it is itself
    migratable/mergeable (RFC-0005). Does a second control-plane instance reconcile
    via CRDT-merge, or is there a single fenced leader (RFC-0006 OQ4)? Who governs
-   the governor when *it* fails — the human floor, or a minimal hard-coded
-   safe-mode heuristic?
+   the governor when *it* fails — and, since INV-5 admits no external floor, the
+   only in-system answers are a peer control-plane instance or a minimal hard-coded
+   safe-mode heuristic that the system falls back to and can itself later revise.
+   This is the sharpest edge of self-sovereignty: the bootstrap of self-governance.
 6. **Off-policy bias** — the audit log is generated by whatever policy was live;
    learning from it inherits that policy's blind spots. Coverage / exploration
    without endangering live agents.
@@ -218,9 +234,11 @@ running loop: the cluster is observed **as a vector**, a policy decides, and the
 decision is actuated **only through the invariant-guarded mechanisms M1–M4 already
 shipped**. The governor is **itself an agent** under the same TAM contract it
 enforces, learning its policy from the **audit log the OS was already keeping** —
-and pinned, unconditionally, beneath the **human floor (INV-5)**. The learning is
-**falsifiable**: a learned policy that cannot beat a readable heuristic never
-actuates. Built bottom-up — a transparent heuristic loop (M5a) first, the agentic
+with **nothing above it** (INV-5: self-sovereignty), no human master key, the AI
+managing the AI all the way down. The learning stays **falsifiable not because an
+operator forces it to**, but because a system optimizing efficiency-under-survival
+has every incentive to keep a gate that stops it from shipping regressions: a
+learned policy that cannot beat a readable heuristic never actuates. Built bottom-up — a transparent heuristic loop (M5a) first, the agentic
 supervisor (M5b), the gated learned policy (M5c), self-optimization (M5d) — M5
 turns "AI manages AI" from the soul-layer slogan of MASTER_PLAN §3 into the
 differentiating moat, and proves on cheap software the RL-placement loop that M7

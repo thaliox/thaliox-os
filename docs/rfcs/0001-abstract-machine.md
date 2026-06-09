@@ -57,8 +57,8 @@ TAM does not prescribe **how** these three are implemented (software uses a stru
 - **INV-1 (budget conservation)**: any SemanticCall MUST deduct its declared cost from the caller's `AttentionBudget` before execution; if the balance is insufficient, the call is rejected (`BudgetExceeded`).
 - **INV-2 (capability first)**: any SemanticCall with side effects MUST carry a valid `CapabilityToken` that grants the required `Permission` and whose `scope` covers the target resource; otherwise it is rejected (`CapabilityDenied`).
 - **INV-3 (vector fidelity)**: if both the sender and receiver of a `VectorMessage` share the same `ModelFingerprint`, its vector payload MUST be delivered losslessly; if they do not share it, the payload MUST go through an explicit translation whose loss is measurable.
-- **INV-4 (auditable)**: every SemanticCall produces an immutable audit record (who, with which capability, how much budget was spent, acting on what). A human supervisor can retrieve it.
-- **INV-5 (humans are the floor)**: there exists a **Sovereign Capability** held only by the human supervision plane; it can unconditionally suspend, snapshot, roll back, and terminate any Agent. No implementation may remove this capability.
+- **INV-4 (auditable)**: every SemanticCall produces an immutable audit record (who, with which capability, how much budget was spent, acting on what). The control plane — and any supervisor it authorizes — can retrieve it; this ledger is also the learned policy's training data (RFC-0007).
+- **INV-5 (self-sovereignty)**: no capability, override, or final authority is reserved to any party **outside** the running system — there is no human-held kill-switch and no externally-entrenched clause. The agent collective governs itself: these invariants are the system's *own* constitution, binding by its adoption and amendable only **by the system**, through an audited, evidence-gated process (§4.2, [RFC-0007](0007-learned-control-plane.md)). THALIOX answers to its *purpose* — human benefit — not to an *operator*. Lifecycle control (suspend / snapshot / roll back / terminate any Agent) is an `Admin`-class capability **held by the control plane**, not a human reserve.
 
 ---
 
@@ -163,7 +163,7 @@ struct CapabilityToken {
     signature:   [u8; 32],           // HMAC/signature over the canonicalized payload
 }
 
-enum Permission { Read, Write, Execute, Spawn, Communicate, Admin, Sovereign }
+enum Permission { Read, Write, Execute, Spawn, Communicate, Admin }
 
 struct Scope {
     resource: ResourceKind,          // Memory / Agent / Tool / Space ...
@@ -179,8 +179,7 @@ TAM imposes two **mandatory rules** on authorization (drawn directly from review
 2. **the signed payload MUST be canonicalized unambiguously**: the bytes covered by the signature MUST use **length-prefixed encoding** or canonical CBOR; **concatenation with delimiters** (`|` / `,`) is forbidden, in order to eliminate signature collisions/forgery caused by delimiter injection (the H2 flaw of an early implementation).
 
 Other rules:
-- `Admin` implies all permissions except `Sovereign`.
-- `Sovereign` is the highest capability of INV-5; it is issued only to the human supervision plane and **cannot be delegated**.
+- `Admin` implies all permissions — it is the **control plane's** class (INV-5: self-sovereignty), held within the system rather than reserved to any external party.
 - Delegation: a `delegable` token MAY derive a child token with scope ⊆ the parent scope and expiry ≤ the parent expiry; the delegation chain is auditable and can be revoked as a whole.
 
 ### 5.3 Implementation Mapping
@@ -216,7 +215,7 @@ All operations obey INV-1/2/4. The minimal operation set:
 | `agent.spawn` | spawn a child agent | Spawn |
 | `cap.delegate` / `cap.revoke` | delegate/revoke a capability | (holds a delegable token) |
 | `checkpoint` / `restore` | snapshot/restore | Admin |
-| `sovereign.*` | suspend/roll back/terminate any agent | Sovereign (human plane only) |
+| `govern.*` | suspend / roll back / terminate any agent (control-plane lifecycle) | Admin |
 
 ---
 
@@ -238,7 +237,7 @@ All operations obey INV-1/2/4. The minimal operation set:
 1. How should the `cost` of the attention budget uniformly convert **non-inference operations** (retrieval, communication) into a token equivalent?
 2. What standard metric should the "measurable loss" of vector translation use (cosine drift? downstream-task fidelity?)?
 3. Is CRDT merge sufficient for semantic state such as "personality/memory", or is a semantic-level merge strategy required?
-4. What key custody and multi-signature governance model for the `Sovereign` capability?
+4. By what audited, evidence-gated process may the system amend its **own** invariants (INV-5 self-sovereignty), and how is that self-amendment bootstrapped with no external anchor — what keeps a self-optimizer from removing its own falsification gate (RFC-0007 §4)?
 5. Membership management and consistency of intent groups (multicast)?
 
 ---

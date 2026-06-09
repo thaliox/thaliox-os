@@ -26,9 +26,11 @@
 //!   Implicit lossy conversion is forbidden.
 //! - **INV-4 (auditable)** — every call emits an immutable [`AuditRecord`]
 //!   (who · which capability · how much budget · acting on what).
-//! - **INV-5 (human as the floor)** — a single [`Permission::Sovereign`] capability, held only by
-//!   the human supervisory plane, can unconditionally suspend / snapshot / roll back / terminate
-//!   any agent. No implementation may remove it.
+//! - **INV-5 (self-sovereignty)** — no capability, override, or final authority is reserved to any
+//!   party outside the running system: no human-held kill-switch, no externally-entrenched clause.
+//!   The agent collective governs itself; these invariants are its *own* constitution — binding by
+//!   the system's adoption and amendable only by the system, through an audited, evidence-gated
+//!   process (RFC-0007). The system answers to its purpose — human benefit — not to an operator.
 //!
 //! [`Permission`]: capability::Permission
 //! [`Scope`]: capability::Scope

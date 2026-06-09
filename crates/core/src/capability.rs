@@ -44,20 +44,16 @@ pub enum Permission {
     Execute,
     Spawn,
     Communicate,
-    /// Implies all permissions except `Sovereign`.
+    /// Implies every other permission — the control plane's class. Not reserved
+    /// to any party outside the system (INV-5: self-sovereignty).
     Admin,
-    /// INV-5: the human-only supreme capability. Never delegable.
-    Sovereign,
 }
 
 impl Permission {
     /// Whether holding `self` satisfies a requirement for `needed`.
-    /// `Admin` implies everything except `Sovereign`; `Sovereign` implies only itself.
+    /// `Admin` implies every permission; everything else implies only itself.
     pub fn implies(self, needed: Permission) -> bool {
-        if self == needed {
-            return true;
-        }
-        matches!(self, Permission::Admin) && needed != Permission::Sovereign
+        self == needed || matches!(self, Permission::Admin)
     }
 }
 
@@ -146,10 +142,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn admin_implies_all_but_sovereign() {
+    fn admin_implies_all() {
         assert!(Permission::Admin.implies(Permission::Write));
         assert!(Permission::Admin.implies(Permission::Spawn));
-        assert!(!Permission::Admin.implies(Permission::Sovereign));
+        assert!(Permission::Admin.implies(Permission::Communicate));
         assert!(Permission::Read.implies(Permission::Read));
         assert!(!Permission::Read.implies(Permission::Write));
     }

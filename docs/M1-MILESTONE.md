@@ -31,7 +31,7 @@ all of it bounded by the attention budget and capability tokens, audited per ope
 | **INV-2 capability first** | `act` verifies the capability token before any side effect: signature (pluggable `CapabilityVerifier`) + not expired + `authorizes(perm, resource, target)` scope enforcement |
 | **INV-3 vector fidelity** | Memory is stored and retrieved via `SemanticSpace`, never downgraded to string keys |
 | **INV-4 auditable** | Every `SemanticCall` writes an `AuditRecord` (op / cost / target / permission_used / allowed) |
-| **INV-5 humans are the floor** | Capabilities are revocable, the budget has a hard ceiling, the full audit is replayable; the Sovereign overrides everything |
+| **INV-5 self-sovereignty** | Capabilities are revocable, the budget has a hard ceiling, the full audit is replayable; lifecycle override (`govern.*`) is an in-system `Admin`-class power, with no authority reserved above the system |
 
 ## 3. Empirical evidence
 

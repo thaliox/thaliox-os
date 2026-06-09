@@ -11,11 +11,11 @@ This repository is the **THALIOX core, rebuilt from scratch**, with the **TAM Ab
 first on Linux) and future custom silicon (H3) obey **one shared semantics**. The evolution in between is
 "swap the implementation," not "tear it down and start over."
 
-## Three immovable principles
+## Four founding principles
 
 1. **Top-Down** — first define how application-layer agents work and what problems they solve, then make the runtime / kernel / hardware serve them, layer by layer. Hardware is the servant of the agent world, not a starting cage.
 2. **Staged Moonshot** — every milestone is independently valuable, demonstrable, fundable, and falsifies the next stage.
-3. **Humans are the Floor** — auditable, one-key takeover, reversible; never bypassable (INV-5 Sovereign capability).
+3. **Self-Governing, Human-Purposed** — the system answers to its *purpose* (human benefit), not to a human *operator*. Governance — scheduling, healing, scaling, self-update, even amending the rules — is internal to the agent collective and audited (INV-4). No reserved human override or kill-switch; safety is **self-imposed and evidence-gated** ([RFC-0007](docs/rfcs/0007-learned-control-plane.md)), not held from outside (INV-5 self-sovereignty). "By AI" is literal.
 4. **Clean-Slate Mandate** — not framed by human legacy (x86 / current CPUs·GPUs / the Linux kernel). **The purpose is efficiency** — to make the AI OS run faster and serve AI fully, not change for change's sake.
 
 ## TAM: three primitives · five invariants
@@ -26,7 +26,7 @@ Three first-principles primitives (see [RFC-0001](docs/rfcs/0001-abstract-machin
 - **Attention Budget** — the unit of scheduling and accounting (tokens), replacing the CPU time slice.
 - **Capability Token** — the unit of permission and trust, replacing uid/gid.
 
-Five invariants constrain any implementation: **INV-1 budget conservation · INV-2 capability first (scope must be enforced) · INV-3 vector fidelity · INV-4 auditable · INV-5 humans are the floor**.
+Five invariants constrain any implementation: **INV-1 budget conservation · INV-2 capability first (scope must be enforced) · INV-3 vector fidelity · INV-4 auditable · INV-5 self-sovereignty (no authority reserved above the system)**.
 
 ## Workspace
 

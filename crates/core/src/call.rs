@@ -37,8 +37,9 @@ pub enum Operation {
     Checkpoint,
     /// Restore an agent from a checkpoint.
     Restore,
-    /// Human-only: suspend / roll back / terminate any agent.
-    Sovereign,
+    /// Lifecycle governance: suspend / roll back / terminate any agent. Held by
+    /// the control plane (M5), not reserved to any party outside the system.
+    Govern,
 }
 
 impl Operation {
@@ -55,14 +56,14 @@ impl Operation {
             AgentSpawn => Permission::Spawn,
             // delegate/revoke are further constrained by holding a *delegable*
             // token; Admin is the class gate.
-            CapDelegate | CapRevoke | Checkpoint | Restore => Permission::Admin,
-            Sovereign => Permission::Sovereign,
+            CapDelegate | CapRevoke | Checkpoint | Restore | Govern => Permission::Admin,
         })
     }
 }
 
 /// **INV-4**: the immutable record every SemanticCall emits, retrievable by the
-/// human supervisory plane.
+/// control plane (and any supervisor it authorizes) for governance and
+/// self-optimization — it is also the learned policy's training ledger (RFC-0007).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditRecord {
     /// Who made the call.
@@ -101,8 +102,8 @@ mod tests {
             Some(Permission::Write)
         );
         assert_eq!(
-            Operation::Sovereign.required_permission(),
-            Some(Permission::Sovereign)
+            Operation::Govern.required_permission(),
+            Some(Permission::Admin)
         );
     }
 }
