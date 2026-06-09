@@ -288,6 +288,19 @@ impl Agent {
         self.budget.remaining()
     }
 
+    /// The agent's attention budget (read-only) — the control plane observes
+    /// `total` / `remaining` here when building its state vector (RFC-0007 M5a).
+    pub fn budget(&self) -> &AttentionBudget {
+        &self.budget
+    }
+
+    /// Top up the agent's attention budget by `tokens` — the control plane's
+    /// **refill actuator** (RFC-0007 M5a): a `Refill` decision raises the ceiling
+    /// so a starved-but-healthy agent regains headroom. Spends are untouched.
+    pub fn grant_budget(&mut self, tokens: u64) {
+        self.budget.grant(tokens);
+    }
+
     /// The immutable audit trail (INV-4).
     pub fn audit(&self) -> &[AuditRecord] {
         &self.audit

@@ -54,7 +54,7 @@ software arc through M4 is complete — each milestone independently valuable:
 
 INV-2 and INV-3 are enforced *between* agents and at the cluster door, not just inside one agent — the team/cluster boundary is not a hole in the invariants.
 
-All four gates green: `fmt` · `clippy -D warnings` · `test` (103) · `doc -D warnings`.
+All four gates green: `fmt` · `clippy -D warnings` · `test` (109) · `doc -D warnings`.
 
 ### Quickstart
 
@@ -73,9 +73,11 @@ cargo run -p thaliox-api      --example gateway        # HTTP gateway on :8088
 ## Roadmap
 
 H1 software (on Linux) → H2 specialization (push down the stack) → H3 co-designed silicon. M1–M4 are
-shipped; next up is **M5 learned control plane** (RL scheduling + a supervisor agent + self-optimization
-— "AI manages AI"), **design now drafted in [RFC-0007](docs/rfcs/0007-learned-control-plane.md)**. Full
-roadmap in [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
+shipped, and **M5 learned control plane** ("AI manages AI", [RFC-0007](docs/rfcs/0007-learned-control-plane.md))
+is underway: **M5a** (`runtime::control`) ships the closed loop — observe the cluster as a fixed-width
+state vector → a swappable `Policy` (heuristic baseline) → actuate only through M1–M4's invariant-guarded
+mechanisms. Next: M5b (the governor as a first-class, self-sovereign agent). Full roadmap in
+[docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
 
 ## Contributing
 

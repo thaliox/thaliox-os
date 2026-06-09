@@ -58,6 +58,14 @@ impl AttentionBudget {
         Ok(())
     }
 
+    /// Raise the budget ceiling by `tokens` — the control plane's **refill /
+    /// adaptive-compute knob** (RFC-0007 M5a/M5d). Increasing `total` increases
+    /// [`remaining`](Self::remaining); the spend ledger is untouched, so INV-1
+    /// accounting still holds.
+    pub fn grant(&mut self, tokens: u64) {
+        self.total = self.total.saturating_add(tokens);
+    }
+
     /// **INV-1 reconciliation** — settle a prior [`charge`](Self::charge)d
     /// reservation against the *actual* cost once it is known (e.g. a real
     /// completion's token usage). If `actual` exceeds the reservation the

@@ -51,6 +51,12 @@ impl Node {
         self.agents.get(id)
     }
 
+    /// Iterate the agents hosted on this node (the control plane observes their
+    /// budget/health here, RFC-0007 M5a).
+    pub fn agents(&self) -> impl Iterator<Item = &Agent> {
+        self.agents.values()
+    }
+
     pub fn agent_mut(&mut self, id: &AgentId) -> Option<&mut Agent> {
         self.agents.get_mut(id)
     }

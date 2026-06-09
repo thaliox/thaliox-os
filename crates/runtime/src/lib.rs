@@ -14,6 +14,9 @@
 pub mod agent;
 /// M3 cluster primitives — nodes & migration (RFC-0005 §2–3).
 pub mod cluster;
+/// M5 learned control plane — the L4 governor (RFC-0007). M5a: the heuristic
+/// control loop (observe → policy → actuate through M1–M4 mechanisms).
+pub mod control;
 /// RFC-0003 §5 falsification gate for the MELD dataflow pillar
 /// (E4 dataflow-scheduled forward pass).
 pub mod experiment;
@@ -31,6 +34,10 @@ pub mod vmproto;
 
 pub use agent::{Action, Agent, Outcome};
 pub use cluster::{MigrateError, Node, NodeId, migrate};
+pub use control::{
+    Actuation, AgentObs, Cluster, ClusterState, ControlPlane, Decision, HeuristicPolicy, NodeObs,
+    Policy, StateVector, StepReport,
+};
 #[cfg(feature = "firecracker")]
 pub use firecracker::{FcError, FirecrackerConfig, FirecrackerDeploy, MicroVm};
 pub use package::{DeployEnv, DeployTarget, LocalDeploy, Manifest, Package, PackageError};
