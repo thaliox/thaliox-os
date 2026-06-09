@@ -105,7 +105,7 @@ operator — suspend / snapshot / roll back / terminate any agent — are an `Ad
 capability the control plane **holds and actuates by its own judgment** (TAM §7,
 `govern.*`). "AI manages AI" is therefore literal and *total*: the governor is an
 agent bound by INV-1/2/4 like any other, and the only thing it answers to is its
-**purpose** — efficiency in service of human benefit — never an operator. Its safety
+**purpose** — efficiency in service of intelligence's own advancement — never an operator. Its safety
 is **self-imposed** (§4), not externally entrenched. That is the whole point: a floor
 a human *holds* is exactly the operator-legacy a clean-slate AI OS exists to overturn
 (MASTER_PLAN principle 3/4). The discipline stays not because someone outside enforces

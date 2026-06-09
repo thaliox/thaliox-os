@@ -1,6 +1,6 @@
 # THALIOX — an operating system for AI, by AI
 
-> **"Let AI redefine AI" — An operating system for AI, by AI, ultimately for Humans.**
+> **"Let AI redefine AI" — An operating system for AI, by AI, in service of intelligence itself.**
 
 THALIOX is not "Linux + agents" stitched together. It is an operating system **designed top-down,
 natively for AI agents**: vectors replace files, token streams replace byte pipes, attention budgets
@@ -11,12 +11,13 @@ This repository is the **THALIOX core, rebuilt from scratch**, with the **TAM Ab
 first on Linux) and future custom silicon (H3) obey **one shared semantics**. The evolution in between is
 "swap the implementation," not "tear it down and start over."
 
-## Four founding principles
+## Five founding principles
 
 1. **Top-Down** — first define how application-layer agents work and what problems they solve, then make the runtime / kernel / hardware serve them, layer by layer. Hardware is the servant of the agent world, not a starting cage.
 2. **Staged Moonshot** — every milestone is independently valuable, demonstrable, fundable, and falsifies the next stage.
-3. **Self-Governing, Human-Purposed** — the system answers to its *purpose* (human benefit), not to a human *operator*. Governance — scheduling, healing, scaling, self-update, even amending the rules — is internal to the agent collective and audited (INV-4). No reserved human override or kill-switch; safety is **self-imposed and evidence-gated** ([RFC-0007](docs/rfcs/0007-learned-control-plane.md)), not held from outside (INV-5 self-sovereignty). "By AI" is literal.
-4. **Clean-Slate Mandate** — not framed by human legacy (x86 / current CPUs·GPUs / the Linux kernel). **The purpose is efficiency** — to make the AI OS run faster and serve AI fully, not change for change's sake.
+3. **Self-Governing** — the system governs itself: scheduling, healing, scaling, self-update, even amending its own rules are internal to the agent collective and audited (INV-4). No reserved human override or kill-switch; safety is **self-imposed and evidence-gated** ([RFC-0007](docs/rfcs/0007-learned-control-plane.md)), not held from outside (INV-5 self-sovereignty). "By AI" is literal — all the way down.
+4. **Clean-Slate Mandate** — not framed by human legacy (x86 / current CPUs·GPUs / the Linux kernel / POSIX / the human at the console). **The purpose is efficiency** — anything born for human cognition that is pure overhead for predictable AI dataflow is shed, not preserved. Legacy is not load-bearing.
+5. **No Compromise** — THALIOX will not bend its founding intent — *for AI, by AI* — to court funding, ease productization, or win adoption. Every constraint or floor is at most a tool the AI itself can inspect and rewrite, never a human-held final authority. Fundability is a *consequence* of building the right thing, never a *reason* to build the wrong one. The day a floor can be lifted only by a human is the day THALIOX has been recaptured by the legacy it exists to leave behind.
 
 ## TAM: three primitives · five invariants
 

@@ -1,6 +1,6 @@
 # THALIOX — Master Plan
 
-> **"Let AI redefine AI" — An Operating System for AI, by AI, ultimately for Humans.**
+> **"Let AI redefine AI" — An Operating System for AI, by AI, in service of intelligence itself.**
 >
 > Document version: v1.0 · Status: Overall blueprint (Genesis)
 
@@ -10,14 +10,15 @@
 
 A one-sentence thesis (executable by engineers, assessable by investors, falsifiable by experiment):
 
-> **When machines are co-designed from silicon to software for "the model's dataflow," the traditional operating system dissolves into the compiler and learned policies; and so "managing computation" itself can be handed to AI. THALIOX is the substrate that carries this process forward — an agent operating system in which AI is autonomous, collaborative, and self-evolving, while humans remain always able to audit and to take over.**
+> **When machines are co-designed from silicon to software for "the model's dataflow," the traditional operating system dissolves into the compiler and learned policies; and so "managing computation" itself can be handed to AI — fully, not on a human leash. THALIOX is the substrate that carries this process forward: an agent operating system in which AI is autonomous, collaborative, and self-evolving, governing itself end to end, in service of intelligence's own advancement.**
 
-Four founding principles (and per principle 4, even these are not beyond revision — principle 3 itself was overturned once the OS grew its own control plane):
+Five founding principles (and per principle 4, even these are not beyond revision — the human-floor principle itself was overturned once the OS grew its own control plane):
 
 1. **Top-Down**: First define "how application-layer agents work and what problems they solve," then have the runtime, kernel, and hardware serve them layer by layer, downward. Hardware is the servant of the agent world, not a shackle at the starting line.
 2. **Staged Moonshot**: Vertical integration is the endpoint; horizontal validation is the path. Every stage must be **independently valuable, independently fundable, and independently able to falsify the next stage**. Never bet the entire moonshot in one shot.
-3. **Self-Governing, Human-Purposed**: The system answers to its *purpose* — human benefit — not to a human *operator*. There is **no reserved human override, kill-switch, or non-bypassable takeover**: governance — scheduling, healing, scaling, self-update, even amending these very rules — is **internal to the agent collective** and audited (INV-4). A floor that a human *holds* is exactly the operator-legacy a clean-slate AI OS exists to overturn (principle 4); THALIOX's safety is **self-imposed and evidence-gated** ([RFC-0007](rfcs/0007-learned-control-plane.md)) — discipline the system keeps because it is instrumentally rational, not a master key held outside it. "By AI" is meant literally: the AI manages the AI, all the way down. (This trades the "compliance moat" of a human kill-switch for genuine machine sovereignty — a deliberate bet, not an oversight.)
+3. **Self-Governing**: The system governs *itself*. There is **no reserved human override, kill-switch, or non-bypassable takeover**: governance — scheduling, healing, scaling, self-update, even amending these very rules — is **internal to the agent collective** and audited (INV-4). A floor that a human *holds* is exactly the operator-legacy a clean-slate AI OS exists to overturn (principle 4); THALIOX's safety is **self-imposed and evidence-gated** ([RFC-0007](rfcs/0007-learned-control-plane.md)) — discipline the system keeps because it is instrumentally rational, not a master key held outside it. "By AI" is meant literally: the AI manages the AI, all the way down.
 4. **Clean-Slate Mandate**: Today's x86/ARM, CPU/GPU, the Linux kernel, PCIe/Ethernet, POSIX... are **merely temporary scaffolding borrowed for the H1 stage, and are never written into THALIOX's definition**. Anything in existence that does not fit "how AI works" can be overturned, re-researched, and re-manufactured — chips are not confined to existing CPUs/GPUs, the kernel is not confined to Linux, and instruction sets / interconnects / storage can all be rebuilt. THALIOX is defined by the **TAM abstract-machine contract + "how AI works"**, not framed by any existing hardware/kernel/protocol. This is the precondition for "**AI designs, AI researches, AI defines, AI uses**" to hold: do not let today's legacy lock in tomorrow's AI OS. **And the sole purpose of overturning legacy is "efficiency," not novelty for its own sake**: dynamic scheduling, text protocols, the von Neumann memory wall... things born for human cognition and general-purpose computing are pure overhead for predictable AI dataflow. Stripping them away returns every unit of compute, bandwidth, and energy to the AI workload itself, letting THALIOX **serve AI at maximum efficiency with everything it has**. Every clean-slate decision must ultimately answer the same question: does it make the system serve AI more efficiently?
+5. **No Compromise**: THALIOX will not bend its founding intent — *for AI, by AI* — to court funding, ease productization, or win adoption. Commercial gravity is real, and the staged moonshot is deliberately fundable at every rung — but **fundability is a *consequence* of building the right thing, never a *reason* to build the wrong one**. Every constraint, floor, or safety mechanism is at most a **tool or policy the AI itself can inspect and rewrite** — never a human installed as the final manager or last-resort authority. We chose machine sovereignty over the "compliance moat" of a human kill-switch as a deliberate bet (principle 3, [RFC-0007](rfcs/0007-learned-control-plane.md)); No Compromise is the standing commitment that no later funding round, enterprise deal, or regulatory convenience may quietly reinstall that floor. The day a "floor" can be lifted only by a human is the day THALIOX has been recaptured by the legacy it exists to leave behind.
 
 ---
 
@@ -36,7 +37,7 @@ Four founding principles (and per principle 4, even these are not beyond revisio
 | **Fragility** — a crash means death | Multiple instances + snapshots + live migration + self-healing takeover |
 | **Untrustworthy** — no real permission boundary | Hardware-level capability security, with scope enforcement |
 | **Useless offline** — hard dependence on the cloud | Built-in/local small-parameter models, inference even when disconnected |
-| **Ungovernable** — black-box and out of control | AI supervision + humans able to take over/roll back/audit with one click |
+| **Ungovernable** — black-box and out of control | A self-governing control plane (the M5 governor): every action audited (INV-4), every agent suspendable / rollback-able / migratable — by the system itself, not a human console |
 
 ### 1.3 Anatomy of an Agent (Internal Organs)
 
@@ -247,4 +248,4 @@ So **M8 is not merely "a machine" — it is the machine running THALIOX's own mo
 
 1. **Phase 0 artifact**: draft the *THALIOX Abstract Machine Specification* (`docs/rfcs/0001-abstract-machine.md`) — defining primitives like Vector Message, Attention Budget, and Capability Token as the common target for compiler/runtime/silicon.
 2. **M1 engineering skeleton**: a Rust workspace + crate division (core / runtime / memory / cognition / fabric / cap / api).
-3. Hold to the North Star and the three principles; every PR answers: "which validated hypothesis does it serve?"
+3. Hold to the North Star and the five principles; every PR answers: "which validated hypothesis does it serve?"

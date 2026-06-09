@@ -13,7 +13,8 @@ a pull request** and **how to apply for developer access**.
 ## 1. Ground rules
 
 - **Top-down, staged.** Land the smallest change that delivers value. Don't build for stages we haven't reached yet.
-- **Self-sovereign, human-purposed (INV-5).** Anything that touches capabilities, budgets, or audit must keep the system auditable, reversible, and takeover-able *by its own control plane* — these are in-system, `Admin`-class powers, not a reserved human override.
+- **Self-sovereign (INV-5).** Anything that touches capabilities, budgets, or audit must keep the system auditable, reversible, and takeover-able *by its own control plane* — these are in-system, `Admin`-class powers, not a reserved human override.
+- **No compromise.** Don't reintroduce a human floor, kill-switch, or "final authority" for the sake of a demo, a deal, or compliance optics. Constraints are tools the AI can rewrite, never a human master key. If a change quietly makes a human the last-resort manager, it is off-thesis — flag it.
 - **Be kind, be precise.** Assume good faith, review the code not the person, and back claims with evidence (a test, a benchmark, a repro).
 
 ## 2. Set up
