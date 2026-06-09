@@ -35,8 +35,8 @@ pub mod vmproto;
 pub use agent::{Action, Agent, Outcome};
 pub use cluster::{MigrateError, Node, NodeId, migrate};
 pub use control::{
-    Actuation, AgentObs, Cluster, ClusterState, ControlPlane, Decision, HeuristicPolicy, NodeObs,
-    Policy, StateVector, StepReport,
+    Actuation, AgentObs, Cluster, ClusterState, ControlPlane, Decision, Disposition, GovDecision,
+    GovReport, Governor, HeuristicPolicy, Mode, NodeObs, Policy, StateVector, StepReport,
 };
 #[cfg(feature = "firecracker")]
 pub use firecracker::{FcError, FirecrackerConfig, FirecrackerDeploy, MicroVm};

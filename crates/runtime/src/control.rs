@@ -3,7 +3,7 @@
 //! The closed loop where THALIOX governs itself: **observe** the cluster as a
 //! fixed-width vector → run a **policy** → **actuate** *only* through the
 //! mechanisms M1–M4 already shipped ([`Supervisor::self_heal`], runtime
-//! [`migrate`](crate::migrate), [`Agent::grant_budget`](crate::Agent::grant_budget)). The control plane
+//! [`migrate`](crate::migrate), [`Agent::grant_budget`]). The control plane
 //! invents no new way to touch an agent; it only chooses *which* invariant-guarded
 //! operation to invoke, and *when*.
 //!
@@ -16,9 +16,9 @@
 //! Each [`tick`](ControlPlane::tick) yields a [`StepReport`] — the governor's own
 //! audit trail (INV-4), and the ledger a future learned policy trains on.
 
-use thaliox_core::AgentId;
+use thaliox_core::{AgentId, AuditRecord, Permission, ResourceKind};
 
-use crate::{DeployEnv, Health, Node, NodeId, Supervisor};
+use crate::{Action, Agent, DeployEnv, Health, Node, NodeId, Supervisor};
 
 /// A bag of [`Node`]s the control plane actuates over. It owns the nodes so it can
 /// hand the right `&mut Node`(s) to the runtime mechanisms (`self_heal`,
@@ -218,8 +218,20 @@ pub enum Decision {
         to: NodeId,
     },
     /// Top up a starved-but-healthy agent's attention budget
-    /// (actuated by [`Agent::grant_budget`](crate::Agent::grant_budget)).
+    /// (actuated by [`Agent::grant_budget`]).
     Refill { agent: AgentId, tokens: u64 },
+}
+
+impl Decision {
+    /// The agent this decision governs — the target the actuation is
+    /// capability-checked against (INV-2, RFC-0007 M5b).
+    pub fn target(&self) -> &AgentId {
+        match self {
+            Decision::Heal { agent, .. }
+            | Decision::Migrate { agent, .. }
+            | Decision::Refill { agent, .. } => agent,
+        }
+    }
 }
 
 /// The control plane's **policy** — the one swappable part (TAM §4.2). M5a ships
@@ -427,7 +439,7 @@ impl ControlPlane {
         let decisions = self.policy.decide(&state);
         let mut actuations = Vec::new();
         for decision in decisions {
-            let result = Self::actuate(&decision, cluster, supervisor, env);
+            let result = actuate(&decision, cluster, supervisor, env);
             actuations.push(Actuation { decision, result });
         }
         let report = StepReport {
@@ -438,42 +450,243 @@ impl ControlPlane {
         self.history.push(report.clone());
         report
     }
+}
 
-    /// Apply one decision through its mechanism. Each actuation is best-effort;
-    /// an inapplicable decision returns an `Err(String)` recorded in the report.
-    fn actuate(
-        decision: &Decision,
+/// Apply one decision through its mechanism — the shared actuation path for the
+/// M5a [`ControlPlane`] and the M5b [`Governor`]. Best-effort: an inapplicable
+/// decision returns `Err(String)`.
+fn actuate(
+    decision: &Decision,
+    cluster: &mut Cluster,
+    supervisor: &mut Supervisor,
+    env: &dyn Fn() -> DeployEnv,
+) -> Result<(), String> {
+    match decision {
+        Decision::Heal { agent, onto } => {
+            let node = cluster
+                .node_mut(onto)
+                .ok_or_else(|| format!("node {} not found", onto.0))?;
+            supervisor
+                .self_heal(agent, node, env())
+                .map_err(|e| e.to_string())?;
+            cluster.drain_except(agent, onto); // single-instance fence
+            Ok(())
+        }
+        Decision::Migrate { agent, from, to } => cluster.migrate(from, to, agent, env()),
+        Decision::Refill { agent, tokens } => {
+            let node_id = cluster
+                .nodes()
+                .iter()
+                .find(|n| n.hosts(agent))
+                .map(|n| n.id().clone())
+                .ok_or_else(|| format!("agent {agent} not hosted"))?;
+            cluster
+                .node_mut(&node_id)
+                .and_then(|n| n.agent_mut(agent))
+                .expect("located above")
+                .grant_budget(*tokens);
+            Ok(())
+        }
+    }
+}
+
+// ───────────────────────── M5b: the governor as an agent ─────────────────────
+
+/// How aggressively the governor actuates — gated **in-system**, never by a human
+/// (INV-5). A learned policy (M5c) is promoted `Shadow → Canary → Act` by the
+/// plane itself once it clears its falsification gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Decide and log, but never actuate — where a policy proves itself first.
+    Shadow,
+    /// Actuate at most `n` decisions this tick — a bounded, revertible blast radius.
+    Canary(usize),
+    /// Actuate every authorized decision.
+    Act,
+}
+
+impl Mode {
+    /// Whether this mode permits actuating once `applied` decisions already have.
+    fn permits(self, applied: usize) -> bool {
+        match self {
+            Mode::Shadow => false,
+            Mode::Canary(limit) => applied < limit,
+            Mode::Act => true,
+        }
+    }
+}
+
+/// What became of one decision under the governor's gates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Disposition {
+    /// Applied through its mechanism.
+    Applied,
+    /// Held back by the [`Mode`] (shadow, or beyond the canary limit).
+    Shadowed,
+    /// Denied — the governor holds no capability over the target (INV-2).
+    Denied,
+    /// The mechanism returned an error.
+    Failed(String),
+}
+
+/// One decision and what the governor did with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GovDecision {
+    pub decision: Decision,
+    pub disposition: Disposition,
+}
+
+/// The audit record of one [`Governor`] tick (INV-4) — including the governor's
+/// own budget spend (INV-1) and per-decision disposition.
+#[derive(Debug, Clone)]
+pub struct GovReport {
+    pub governor: AgentId,
+    pub mode: Mode,
+    pub vector: StateVector,
+    /// The governor's own remaining budget after deliberating (INV-1).
+    pub budget_remaining: u64,
+    /// `false` ⇒ the governor was too starved to even think this tick.
+    pub deliberated: bool,
+    pub decisions: Vec<GovDecision>,
+}
+
+impl GovReport {
+    /// How many decisions actuated successfully.
+    pub fn applied(&self) -> usize {
+        self.decisions
+            .iter()
+            .filter(|d| d.disposition == Disposition::Applied)
+            .count()
+    }
+}
+
+/// The **agentic** control plane (M5b): the governor is itself a first-class
+/// [`Agent`]. It *thinks* over the state vector (spending budget, INV-1), *acts
+/// under capability* (INV-2) on every actuation, and is *audited* (INV-4) —
+/// entirely in-system, with no human in the loop and no authority above it
+/// (INV-5). Actuation is gated by a [`Mode`] (shadow → canary → act) the plane
+/// sets for itself.
+///
+/// "AI manages AI" is therefore literal: the governor obeys the same TAM contract
+/// as the agents it governs, and the only thing it answers to is its purpose.
+pub struct Governor {
+    agent: Agent,
+    policy: Box<dyn Policy>,
+    mode: Mode,
+    think_cost: u64,
+    history: Vec<GovReport>,
+}
+
+impl Governor {
+    /// Build a governor from its **own** agent (identity + budget + capabilities;
+    /// must be live), a policy, and a starting mode. `think_cost` tokens are
+    /// charged per tick to deliberate.
+    pub fn new(agent: Agent, policy: Box<dyn Policy>, mode: Mode, think_cost: u64) -> Self {
+        Self {
+            agent,
+            policy,
+            mode,
+            think_cost,
+            history: Vec::new(),
+        }
+    }
+
+    pub fn id(&self) -> &AgentId {
+        self.agent.id()
+    }
+
+    pub fn mode(&self) -> Mode {
+        self.mode
+    }
+
+    /// Change the actuation mode — an in-system decision (e.g. promote a policy
+    /// `Shadow → Canary` once it clears its gate). No human approval (INV-5).
+    pub fn set_mode(&mut self, mode: Mode) {
+        self.mode = mode;
+    }
+
+    /// The governor's own remaining attention budget (INV-1).
+    pub fn budget_remaining(&self) -> u64 {
+        self.agent.remaining_budget()
+    }
+
+    /// The governor's own audit trail (INV-4) — the governor is as inspectable as
+    /// the governed.
+    pub fn audit(&self) -> &[AuditRecord] {
+        self.agent.audit()
+    }
+
+    pub fn history(&self) -> &[GovReport] {
+        &self.history
+    }
+
+    /// One agentic control cycle: **think** (pay budget) → observe → decide →
+    /// gate (capability + mode) → actuate. If the governor cannot afford to think,
+    /// it governs nothing this tick — it cannot livelock the fleet by deliberating
+    /// for free.
+    pub async fn tick(
+        &mut self,
         cluster: &mut Cluster,
         supervisor: &mut Supervisor,
         env: &dyn Fn() -> DeployEnv,
-    ) -> Result<(), String> {
-        match decision {
-            Decision::Heal { agent, onto } => {
-                let node = cluster
-                    .node_mut(onto)
-                    .ok_or_else(|| format!("node {} not found", onto.0))?;
-                supervisor
-                    .self_heal(agent, node, env())
-                    .map_err(|e| e.to_string())?;
-                cluster.drain_except(agent, onto); // single-instance fence
-                Ok(())
-            }
-            Decision::Migrate { agent, from, to } => cluster.migrate(from, to, agent, env()),
-            Decision::Refill { agent, tokens } => {
-                let node_id = cluster
-                    .nodes()
-                    .iter()
-                    .find(|n| n.hosts(agent))
-                    .map(|n| n.id().clone())
-                    .ok_or_else(|| format!("agent {agent} not hosted"))?;
-                cluster
-                    .node_mut(&node_id)
-                    .and_then(|n| n.agent_mut(agent))
-                    .expect("located above")
-                    .grant_budget(*tokens);
-                Ok(())
+    ) -> GovReport {
+        let state = ControlPlane::observe(cluster, supervisor);
+        let vector = state.vector();
+
+        // INV-1: deliberation is metered work. If the budget can't cover a Think,
+        // the governor is starved and actuates nothing this tick.
+        let deliberated = self
+            .agent
+            .act(Action::Think {
+                prompt: format!(
+                    "govern: {} agents, {} suspected",
+                    vector.n_agents as u64, vector.n_suspected as u64
+                ),
+                cost: self.think_cost,
+            })
+            .await
+            .is_ok();
+
+        let mut decisions = Vec::new();
+        if deliberated {
+            let mut applied = 0usize;
+            for decision in self.policy.decide(&state) {
+                let target = decision.target().as_str().to_string();
+                let disposition =
+                    if !self
+                        .agent
+                        .can(Permission::Admin, ResourceKind::Agent, &target)
+                    {
+                        // INV-2: the governor needs a capability over the target.
+                        Disposition::Denied
+                    } else if !self.mode.permits(applied) {
+                        Disposition::Shadowed
+                    } else {
+                        match actuate(&decision, cluster, supervisor, env) {
+                            Ok(()) => {
+                                applied += 1;
+                                Disposition::Applied
+                            }
+                            Err(e) => Disposition::Failed(e),
+                        }
+                    };
+                decisions.push(GovDecision {
+                    decision,
+                    disposition,
+                });
             }
         }
+
+        let report = GovReport {
+            governor: self.agent.id().clone(),
+            mode: self.mode,
+            vector,
+            budget_remaining: self.agent.remaining_budget(),
+            deliberated,
+            decisions,
+        };
+        self.history.push(report.clone());
+        report
     }
 }
 
@@ -482,11 +695,12 @@ mod tests {
     use std::sync::Arc;
 
     use thaliox_cognition::MockProvider;
-    use thaliox_core::{AgentId, AttentionBudget};
+    use thaliox_core::{
+        AgentId, AttentionBudget, CapabilityToken, Permission, ResourceKind, Scope,
+    };
     use thaliox_memory::InMemorySpace;
 
     use super::*;
-    use crate::{Action, Agent};
 
     fn fresh_env() -> DeployEnv {
         DeployEnv {
@@ -696,6 +910,148 @@ mod tests {
         assert!(report.actuations.is_empty());
         // Not healed — the mechanism only runs when the policy says so.
         assert!(cluster.node(&NodeId::new("A")).unwrap().hosts(&id));
+        assert!(cluster.node(&NodeId::new("B")).unwrap().is_empty());
+    }
+
+    // ───────────────────────────── M5b: the governor ─────────────────────────
+
+    /// A two-node cluster (A holds the named agents, B is empty) where every
+    /// named agent has been driven to `Suspected`.
+    async fn suspected_cluster(ids: &[&str]) -> (Cluster, Supervisor) {
+        let mut node_a = Node::new("A");
+        let mut sup = Supervisor::new(2);
+        for &id in ids {
+            let a = agent_with_spend(id, 100, 1).await; // budget 95, healthy frac
+            sup.observe(&AgentId::new(id), NodeId::new("A"), a.checkpoint());
+            node_a.host(a);
+        }
+        let mut cluster = Cluster::new();
+        cluster.add(node_a);
+        cluster.add(Node::new("B"));
+        sup.tick();
+        sup.tick(); // miss_threshold 2 → all Suspected
+        (cluster, sup)
+    }
+
+    /// An `Admin`-over-`Agent` capability scoped to `pattern` (the `govern.*` grant).
+    fn govern_cap(pattern: &str) -> CapabilityToken {
+        CapabilityToken {
+            subject: AgentId::new("gov"),
+            permissions: vec![Permission::Admin],
+            scope: vec![Scope {
+                resource: ResourceKind::Agent,
+                pattern: pattern.into(),
+            }],
+            issued_at: 0,
+            expires_at: 0,
+            jti: [0; 16],
+            delegable: false,
+            signature: [0; 32],
+        }
+    }
+
+    fn governor(budget: u64, mode: Mode, cap: Option<&str>) -> Governor {
+        let mut a = live_agent("gov", budget);
+        if let Some(p) = cap {
+            a = a.grant(govern_cap(p));
+        }
+        Governor::new(a, Box::new(HeuristicPolicy::default()), mode, 5)
+    }
+
+    #[tokio::test]
+    async fn governor_thinks_and_acts_under_capability() {
+        let (mut cluster, mut sup) = suspected_cluster(&["a1"]).await;
+        let mut gov = governor(1000, Mode::Act, Some("*"));
+        let report = gov.tick(&mut cluster, &mut sup, &fresh_env).await;
+
+        assert!(report.deliberated);
+        assert_eq!(report.budget_remaining, 995); // Think cost 5 (INV-1)
+        assert!(!gov.audit().is_empty()); // the Think is audited (INV-4)
+        assert_eq!(report.applied(), 1);
+        assert_eq!(report.decisions[0].disposition, Disposition::Applied);
+        assert!(
+            cluster
+                .node(&NodeId::new("B"))
+                .unwrap()
+                .hosts(&AgentId::new("a1"))
+        );
+    }
+
+    #[tokio::test]
+    async fn governor_without_capability_is_denied() {
+        // INV-2: a govern cap scoped to "other-*" does not cover agent "a1".
+        let (mut cluster, mut sup) = suspected_cluster(&["a1"]).await;
+        let mut gov = governor(1000, Mode::Act, Some("other-*"));
+        let report = gov.tick(&mut cluster, &mut sup, &fresh_env).await;
+
+        assert!(report.deliberated);
+        assert_eq!(report.decisions[0].disposition, Disposition::Denied);
+        assert_eq!(report.applied(), 0);
+        // Denied at the door — not healed.
+        assert!(
+            cluster
+                .node(&NodeId::new("A"))
+                .unwrap()
+                .hosts(&AgentId::new("a1"))
+        );
+        assert!(cluster.node(&NodeId::new("B")).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn shadow_mode_decides_but_does_not_actuate() {
+        let (mut cluster, mut sup) = suspected_cluster(&["a1"]).await;
+        let mut gov = governor(1000, Mode::Shadow, Some("*"));
+        let report = gov.tick(&mut cluster, &mut sup, &fresh_env).await;
+
+        assert!(report.deliberated);
+        assert_eq!(report.decisions.len(), 1); // it DID decide
+        assert_eq!(report.decisions[0].disposition, Disposition::Shadowed);
+        assert_eq!(report.applied(), 0);
+        // Shadow observes without touching the fleet.
+        assert!(
+            cluster
+                .node(&NodeId::new("A"))
+                .unwrap()
+                .hosts(&AgentId::new("a1"))
+        );
+    }
+
+    #[tokio::test]
+    async fn canary_mode_bounds_the_blast_radius() {
+        // Two suspected agents → two heal decisions; Canary(1) applies exactly one.
+        let (mut cluster, mut sup) = suspected_cluster(&["a1", "a2"]).await;
+        let mut gov = governor(1000, Mode::Canary(1), Some("*"));
+        let report = gov.tick(&mut cluster, &mut sup, &fresh_env).await;
+
+        assert_eq!(report.decisions.len(), 2);
+        assert_eq!(report.applied(), 1);
+        assert_eq!(
+            report
+                .decisions
+                .iter()
+                .filter(|d| d.disposition == Disposition::Shadowed)
+                .count(),
+            1
+        );
+        assert_eq!(cluster.node(&NodeId::new("B")).unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn starved_governor_governs_nothing() {
+        // INV-1: think_cost 5 > budget 3 → can't deliberate → no governance.
+        let (mut cluster, mut sup) = suspected_cluster(&["a1"]).await;
+        let mut gov = governor(3, Mode::Act, Some("*"));
+        let report = gov.tick(&mut cluster, &mut sup, &fresh_env).await;
+
+        assert!(!report.deliberated);
+        assert!(report.decisions.is_empty());
+        // The fleet is untouched when the governor can't afford to think.
+        assert!(
+            cluster
+                .node(&NodeId::new("A"))
+                .unwrap()
+                .hosts(&AgentId::new("a1"))
+        );
         assert!(cluster.node(&NodeId::new("B")).unwrap().is_empty());
     }
 }

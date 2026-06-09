@@ -54,7 +54,7 @@ software arc through M4 is complete — each milestone independently valuable:
 
 INV-2 and INV-3 are enforced *between* agents and at the cluster door, not just inside one agent — the team/cluster boundary is not a hole in the invariants.
 
-All four gates green: `fmt` · `clippy -D warnings` · `test` (109) · `doc -D warnings`.
+All four gates green: `fmt` · `clippy -D warnings` · `test` (114) · `doc -D warnings`.
 
 ### Quickstart
 
@@ -76,7 +76,9 @@ H1 software (on Linux) → H2 specialization (push down the stack) → H3 co-des
 shipped, and **M5 learned control plane** ("AI manages AI", [RFC-0007](docs/rfcs/0007-learned-control-plane.md))
 is underway: **M5a** (`runtime::control`) ships the closed loop — observe the cluster as a fixed-width
 state vector → a swappable `Policy` (heuristic baseline) → actuate only through M1–M4's invariant-guarded
-mechanisms. Next: M5b (the governor as a first-class, self-sovereign agent). Full roadmap in
+mechanisms; **M5b** makes the governor itself a first-class agent — it thinks (spends budget, INV-1),
+acts under capability (INV-2), is audited (INV-4), with Shadow/Canary/Act modes gated in-system, no human
+(INV-5). Next: M5c (the learned policy + its falsification gate). Full roadmap in
 [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
 
 ## Contributing

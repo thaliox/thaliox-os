@@ -24,7 +24,7 @@ use serde_json::json;
 use thaliox_cognition::{CognitiveState, Completion, LlmProvider, Message, ToolSpec};
 use thaliox_core::{
     AgentId, AttentionBudget, AuditRecord, CapabilityToken, CapabilityVerifier, Operation,
-    ResourceKind, SemanticObject, SemanticSpace, TamError, Tool,
+    Permission, ResourceKind, SemanticObject, SemanticSpace, TamError, Tool,
 };
 
 use crate::{Checkpoint, Phase};
@@ -304,6 +304,20 @@ impl Agent {
     /// The immutable audit trail (INV-4).
     pub fn audit(&self) -> &[AuditRecord] {
         &self.audit
+    }
+
+    /// **INV-2 predicate** — does this agent hold a capability authorizing
+    /// `permission` over `(resource, target)` (authentic signature + live expiry
+    /// when a verifier is set, plus permission class and scope)? This is the same
+    /// check [`act`](Agent::act) runs internally, exposed so the control plane can
+    /// gate its own `govern.*` actuations *before* invoking a mechanism that is
+    /// not itself an `act` call (RFC-0007 M5b).
+    pub fn can(&self, permission: Permission, resource: ResourceKind, target: &str) -> bool {
+        let now_secs = now_millis() / 1000;
+        self.caps.iter().any(|c| {
+            self.verifier.as_ref().is_none_or(|v| v.verify(c, now_secs))
+                && c.authorizes(permission, resource, target)
+        })
     }
 
     /// Capture the agent's complete recoverable state as a [`Checkpoint`]
