@@ -73,7 +73,8 @@ cargo run -p thaliox-api      --example gateway        # HTTP gateway on :8088
 
 H1 software (on Linux) → H2 specialization (push down the stack) → H3 co-designed silicon. M1–M4 are
 shipped; next up is **M5 learned control plane** (RL scheduling + a supervisor agent + self-optimization
-— "AI manages AI"). Full roadmap in [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
+— "AI manages AI"), **design now drafted in [RFC-0007](docs/rfcs/0007-learned-control-plane.md)**. Full
+roadmap in [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
 
 ## Contributing
 
