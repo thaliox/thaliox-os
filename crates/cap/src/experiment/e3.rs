@@ -23,7 +23,7 @@
 //! > byte? If not (and the authorized read still works), access is structural.
 //!
 //! E3 exercises the **real** capability stack: tokens are signed and verified by
-//! [`HmacSigner`](crate::HmacSigner) and gated by
+//! [`HmacSigner`] and gated by
 //! [`CapabilityToken::authorizes`]. It runs the same adversary battery against
 //! both stores and reports the contrast: the checked store leaks on a raw dump;
 //! the addressed store does not.

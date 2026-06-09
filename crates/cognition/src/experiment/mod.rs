@@ -4,9 +4,9 @@
 //! (RFC-0003 §5). Each experiment **isolates one primitive** and reports a
 //! pass/kill verdict — evidence, not ambition, advances the moonshot.
 //!
-//! - [`e1`] — **pillar 2**, Mergeable Cognition: can a fixed-size latent admit a
+//! - `e1` — **pillar 2**, Mergeable Cognition: can a fixed-size latent admit a
 //!   merge operator that is both *useful* and *CRDT-lawful*?
-//! - [`e2`] — **pillar 3**, Energy-based Latent Readout: does iterative energy
+//! - `e2` — **pillar 3**, Energy-based Latent Readout: does iterative energy
 //!   minimization give a monotone, saturating *steps↔quality* curve — i.e. a real
 //!   AttentionBudget knob (RFC-0001 §4; RFC-0002 §3.3)?
 

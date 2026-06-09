@@ -5,7 +5,7 @@
 //! runs the *production* `HmacSigner` verify and `CapabilityToken::authorizes`,
 //! not a reimplementation.
 //!
-//! - [`e3`] — **pillar 4**, Capability-addressed Memory: is unauthorized access
+//! - `e3` — **pillar 4**, Capability-addressed Memory: is unauthorized access
 //!   *structurally impossible* (no plaintext on any path, including a full raw
 //!   dump of persisted state) rather than merely refused by an `if`?
 
