@@ -1012,7 +1012,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-api"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
  "http-body-util",
@@ -1030,7 +1030,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-cap"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "hmac",
  "sha2",
@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-cognition"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -1049,7 +1049,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1058,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-fabric"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1072,7 +1072,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-fabric-node"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "thaliox-cognition",
  "thaliox-core",
@@ -1084,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-guest-runner"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "libc",
  "thaliox-cognition",
@@ -1096,7 +1096,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-memory"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "parking_lot",
  "thaliox-core",
@@ -1104,7 +1104,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-runtime"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "thaliox-tools"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "reqwest",

@@ -99,6 +99,13 @@ impl CheckpointHistory {
         self.gens.last().map(|g| g.number).unwrap_or(0)
     }
 
+    /// Whether an unproven candidate is currently staged — i.e. a pending
+    /// self-update awaiting a promote-or-rollback verdict (the M5d control
+    /// plane's decision, RFC-0007 §5).
+    pub fn has_candidate(&self) -> bool {
+        matches!(self.gens.last(), Some(g) if g.status == GenStatus::Candidate)
+    }
+
     /// The most recent committed (known-good) checkpoint — the rollback target.
     pub fn last_good(&self) -> &Checkpoint {
         self.gens

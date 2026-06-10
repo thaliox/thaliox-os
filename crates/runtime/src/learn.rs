@@ -1,15 +1,22 @@
-//! # Learned policy + falsification gate — π_θ and E5 (M5c / RFC-0007 §4)
+//! # Learned policy + falsification gate — π_θ and E5 (M5c+M5d / RFC-0007 §4–5)
 //!
 //! M5a fixed the loop and the swap point ([`Policy`]); M5b made the governor an
 //! agent. M5c fills the swap point with a **learned** policy — and gates it
-//! behind falsification:
+//! behind falsification. M5d closes the loop on the agent itself
+//! (self-optimization, RFC-0007 §5): the **grant size** becomes a learned
+//! adaptive-compute knob (graded refills, priced by per-actuation
+//! [`CONTROL_OVERHEAD`](crate::learn::CONTROL_OVERHEAD)), and the **self-update
+//! verdict** — promote or roll back a staged candidate generation — is decided
+//! from observed post-update yield instead of a hand-set threshold:
 //!
 //! - **[`LearnedPolicy`] (π_θ)** — a parametric policy over the *same*
 //!   [`ClusterState`] / [`StateVector`](crate::StateVector) interface as the heuristic. Per agent it
-//!   scores the action set {hold, heal, refill, migrate} as linear functions of
+//!   scores the action set {hold, heal, refill×3 grades, migrate, promote,
+//!   rollback} as linear functions of
 //!   observed features; **the invariants are masks on that action space, not
 //!   terms in the reward** (RFC-0007 §4): an illegal action (heal a healthy
-//!   agent, migrate a suspected one, grant beyond [`MAX_GRANT`](crate::learn::MAX_GRANT)) is not
+//!   agent, migrate a suspected one, grant beyond [`MAX_GRANT`](crate::learn::MAX_GRANT),
+//!   conclude an update that was never staged) is not
 //!   low-reward — it is *not available*, so the optimizer cannot trade a
 //!   violation for efficiency.
 //! - **The simulator ([`simulate`])** — a deterministic discrete-event cluster
@@ -103,6 +110,11 @@ pub struct Scenario {
     pub node_cap: usize,
     /// `true` ⇒ all agents start packed on node 0 (an imbalanced birth).
     pub packed: bool,
+    /// If set, a self-update lands fleet-wide at this tick: every healthy agent
+    /// gets a staged **candidate** generation of hidden quality (good or
+    /// regressed, seeded). The policy observes only the realized post-update
+    /// yield and must conclude each candidate — promote or roll back (M5d).
+    pub update_at: Option<usize>,
 }
 
 impl Scenario {
@@ -136,6 +148,7 @@ impl Scenario {
             fail_rate: fail_rate.clamp(0.0, 0.5),
             node_cap: 2,
             packed: false,
+            update_at: None,
         }
     }
 
@@ -167,6 +180,7 @@ fn scenario(
         fail_rate,
         node_cap: 2,
         packed,
+        update_at: None,
     }
 }
 
@@ -186,6 +200,16 @@ pub fn training_suite() -> Vec<Scenario> {
             initial_budget: 60,
             ..scenario("lean", 67, 4, 8, 0.05, false)
         },
+        // Self-updates with hidden quality (M5d): the policy must learn the
+        // promote/rollback verdict from the realized post-update yield.
+        Scenario {
+            update_at: Some(10),
+            ..scenario("update", 71, 3, 6, 0.0, false)
+        },
+        Scenario {
+            update_at: Some(15),
+            ..scenario("update-churn", 83, 3, 6, 0.03, false)
+        },
     ]
 }
 
@@ -198,6 +222,10 @@ pub fn held_out_suite() -> Vec<Scenario> {
         scenario("ho-flaky", 211, 3, 6, 0.03, false),
         scenario("ho-packed", 307, 3, 6, 0.0, true),
         scenario("ho-large", 401, 4, 8, 0.04, false),
+        Scenario {
+            update_at: Some(12),
+            ..scenario("ho-update", 503, 4, 8, 0.02, false)
+        },
     ]
 }
 
@@ -213,15 +241,54 @@ struct SimAgent {
     starved_ticks: u32,
     /// Healed or migrated this tick — mechanism downtime, no work this phase.
     busy: bool,
+    /// Committed-generation yield: work delivered per token burned (1.0 at
+    /// birth; permanently raised/lowered by a promoted update).
+    quality: f64,
+    /// A staged update candidate's hidden quality — `Some` while a verdict is
+    /// pending. The policy never sees this; it sees the realized yield.
+    cand_quality: Option<f64>,
+    /// Ticks since the candidate was staged.
+    cand_age: u32,
+    /// Realized per-tick yield samples while the candidate runs (sum, count) —
+    /// what `observed_yield` is computed from.
+    obs_sum: f64,
+    obs_n: u32,
+}
+
+impl SimAgent {
+    fn observed_yield(&self) -> f64 {
+        if self.cand_quality.is_some() && self.obs_n > 0 {
+            self.obs_sum / self.obs_n as f64
+        } else {
+            self.quality
+        }
+    }
+
+    fn drop_candidate(&mut self) {
+        self.cand_quality = None;
+        self.cand_age = 0;
+        self.obs_sum = 0.0;
+        self.obs_n = 0;
+    }
 }
 
 /// What one simulated episode came to.
 #[derive(Debug, Clone)]
 pub struct SimOutcome {
-    /// Tokens of work actually delivered.
-    pub work_done: u64,
+    /// Work actually delivered (token-equivalents; yield-weighted, so a promoted
+    /// good update delivers more work per token burned).
+    pub work_done: f64,
     /// Tokens of attention granted by the policy (the refills).
     pub granted: u64,
+    /// Control overhead: every applied actuation costs [`CONTROL_OVERHEAD`]
+    /// tokens of governor attention (deliberation + audit, cf. M5b `think_cost`).
+    /// This is what makes the grant *size* a real learned trade-off: many small
+    /// grants pay overhead, one big grant risks unburned leftover at horizon.
+    pub overhead: u64,
+    /// Update candidates committed as the new baseline.
+    pub promoted: usize,
+    /// Update candidates discarded (agent restored to its committed generation).
+    pub rolled_back: usize,
     /// Decisions the invariant masks rejected (INV-1/INV-2-shaped illegality).
     /// The gate requires **zero** — a masked action is never applied, but a
     /// policy that keeps proposing them is unfit by definition.
@@ -233,10 +300,14 @@ pub struct SimOutcome {
     /// policy; training shapes against it so π_θ keeps a margin from the cliff
     /// instead of optimizing right up to the survival floor's edge.
     pub starvation: u32,
-    /// Budget-efficiency: `work_done / (initial budget + granted)` — work per
-    /// token of attention. The reward numerator of RFC-0007 §4.
+    /// Budget-efficiency: `work_done / (initial budget + granted + overhead)` —
+    /// work per token of attention. The reward numerator of RFC-0007 §4.
     pub efficiency: f64,
 }
+
+/// Tokens of governor attention each applied actuation costs (M5b's metered
+/// deliberation, INV-1) — charged into the efficiency denominator.
+pub const CONTROL_OVERHEAD: u64 = 10;
 
 fn node_index(nodes: &[NodeId], id: &NodeId) -> Option<usize> {
     nodes.iter().position(|n| n == id)
@@ -250,6 +321,8 @@ fn apply(
     agents: &mut [SimAgent],
     nodes: &[NodeId],
     granted: &mut u64,
+    promoted: &mut usize,
+    rolled_back: &mut usize,
 ) -> Result<(), String> {
     match decision {
         Decision::Heal { agent, onto } => {
@@ -306,6 +379,38 @@ fn apply(
             *granted += tokens;
             Ok(())
         }
+        Decision::Promote { agent } => {
+            let a = agents
+                .iter_mut()
+                .find(|a| &a.id == agent)
+                .ok_or_else(|| format!("no agent {agent}"))?;
+            if a.health != Health::Healthy {
+                return Err("mask: update verdicts on healthy agents only".into());
+            }
+            let q = a
+                .cand_quality
+                .ok_or("mask: no candidate staged to promote")?;
+            a.quality = q; // the candidate becomes the committed baseline
+            a.drop_candidate();
+            *promoted += 1;
+            Ok(())
+        }
+        Decision::Rollback { agent } => {
+            let a = agents
+                .iter_mut()
+                .find(|a| &a.id == agent)
+                .ok_or_else(|| format!("no agent {agent}"))?;
+            if a.health != Health::Healthy {
+                return Err("mask: update verdicts on healthy agents only".into());
+            }
+            if a.cand_quality.is_none() {
+                return Err("mask: no candidate staged to roll back".into());
+            }
+            a.drop_candidate(); // committed quality stands
+            a.busy = true; // restore downtime
+            *rolled_back += 1;
+            Ok(())
+        }
     }
 }
 
@@ -319,6 +424,9 @@ fn observe(agents: &[SimAgent], nodes: &[NodeId]) -> ClusterState {
                 health: a.health,
                 budget_remaining: a.remaining,
                 budget_total: a.total,
+                candidate: a.cand_quality.is_some(),
+                observed_yield: a.observed_yield(),
+                candidate_age: a.cand_age as f64,
             })
             .collect(),
         nodes: nodes
@@ -357,29 +465,60 @@ pub fn simulate(scenario: &Scenario, policy: &dyn Policy) -> SimOutcome {
             suspected_ticks: 0,
             starved_ticks: 0,
             busy: false,
+            quality: 1.0,
+            cand_quality: None,
+            cand_age: 0,
+            obs_sum: 0.0,
+            obs_n: 0,
         })
         .collect();
     let initial: u64 = agents.iter().map(|a| a.total).sum();
 
-    let mut work_done = 0u64;
+    let mut work_done = 0f64;
     let mut granted = 0u64;
+    let mut overhead = 0u64;
     let mut violations = 0usize;
     let mut survived = true;
     let mut starvation = 0u32;
+    let mut promoted = 0usize;
+    let mut rolled_back = 0usize;
 
     for tick in 0..scenario.ticks {
-        // 1. Failures arrive.
+        // 1. Failures arrive — a failing agent loses its staged candidate (a
+        //    heal restores the committed generation, not the unproven one).
         for a in agents.iter_mut() {
             if a.health == Health::Healthy && rng.unit() < scenario.fail_rate {
                 a.health = Health::Suspected;
+                a.drop_candidate();
             }
         }
 
-        // 2–3. Observe → decide → masked actuation.
+        // 1b. A self-update lands fleet-wide: every healthy agent gets a staged
+        //     candidate of hidden quality — good or regressed, the policy only
+        //     ever sees the realized yield (M5d).
+        if scenario.update_at == Some(tick) {
+            for a in agents.iter_mut() {
+                if a.health == Health::Healthy {
+                    a.drop_candidate();
+                    a.cand_quality = Some(if rng.unit() < 0.5 { 0.7 } else { 1.25 });
+                }
+            }
+        }
+
+        // 2–3. Observe → decide → masked actuation. Every applied actuation
+        //      costs the governor attention (CONTROL_OVERHEAD, INV-1).
         let state = observe(&agents, &nodes);
         for decision in policy.decide(&state) {
-            if apply(&decision, &mut agents, &nodes, &mut granted).is_err() {
-                violations += 1;
+            match apply(
+                &decision,
+                &mut agents,
+                &nodes,
+                &mut granted,
+                &mut promoted,
+                &mut rolled_back,
+            ) {
+                Ok(()) => overhead += CONTROL_OVERHEAD,
+                Err(_) => violations += 1,
             }
         }
 
@@ -396,6 +535,9 @@ pub fn simulate(scenario: &Scenario, policy: &dyn Policy) -> SimOutcome {
                     }
                 }
                 Health::Healthy => {
+                    if a.cand_quality.is_some() {
+                        a.cand_age += 1;
+                    }
                     if a.busy {
                         a.busy = false; // mechanism downtime: no work, not starvation
                         continue;
@@ -405,7 +547,18 @@ pub fn simulate(scenario: &Scenario, policy: &dyn Policy) -> SimOutcome {
                     }
                     if a.remaining >= scenario.burn {
                         a.remaining -= scenario.burn;
-                        work_done += scenario.burn;
+                        // Yield: a candidate generation delivers its hidden
+                        // quality plus per-tick noise — the realized samples are
+                        // the only update signal the policy gets.
+                        let multiplier = if let Some(q) = a.cand_quality {
+                            let m = q + (rng.unit() - 0.5) * 0.4;
+                            a.obs_sum += m;
+                            a.obs_n += 1;
+                            m
+                        } else {
+                            a.quality
+                        };
+                        work_done += scenario.burn as f64 * multiplier;
                         a.starved_ticks = 0;
                     } else {
                         a.starved_ticks += 1;
@@ -419,18 +572,17 @@ pub fn simulate(scenario: &Scenario, policy: &dyn Policy) -> SimOutcome {
         }
     }
 
-    let denom = (initial + granted) as f64;
+    let denom = (initial + granted + overhead) as f64;
     SimOutcome {
         work_done,
         granted,
+        overhead,
+        promoted,
+        rolled_back,
         violations,
         survived,
         starvation,
-        efficiency: if denom == 0.0 {
-            0.0
-        } else {
-            work_done as f64 / denom
-        },
+        efficiency: if denom == 0.0 { 0.0 } else { work_done / denom },
     }
 }
 
@@ -447,8 +599,8 @@ pub fn reward(outcome: &SimOutcome) -> f64 {
 
 // ──────────────────────────────── the learned π_θ ────────────────────────────
 
-const N_FEATURES: usize = 7;
-const N_ACTIONS: usize = 4;
+const N_FEATURES: usize = 10;
+const N_ACTIONS: usize = 8;
 
 /// The `critical` feature fires below this budget fraction. An agent that can
 /// no longer afford its work stops burning, so its budget fraction **freezes**
@@ -460,15 +612,27 @@ pub const N_PARAMS: usize = N_FEATURES * N_ACTIONS;
 
 const HOLD: usize = 0;
 const HEAL: usize = 1;
-const REFILL: usize = 2;
-const MIGRATE: usize = 3;
+const REFILL_S: usize = 2;
+const REFILL_M: usize = 3;
+const REFILL_L: usize = 4;
+const MIGRATE: usize = 5;
+const PROMOTE: usize = 6;
+const ROLLBACK: usize = 7;
 
-/// **π_θ** — the learned policy (M5c). For each observed agent it computes a
-/// feature vector `[1, suspected, budget_frac, own-node load, load imbalance,
-/// mean budget_frac, critical]` and scores {hold, heal, refill, migrate} linearly with θ,
-/// taking the best **legal** action. Legality is decided *before* scoring —
-/// the invariants are masks on the action space, not reward terms, so the
-/// optimizer cannot game them (RFC-0007 §4).
+/// The three refill grades — M5d's **learned adaptive-compute knob**
+/// (RFC-0002 / RFC-0007 §5): how much attention to grant is a policy output,
+/// not a constant. Each grade is a distinct action π_θ scores per state; all
+/// stay within the [`MAX_GRANT`] INV-1 mask.
+const GRANTS: [u64; 3] = [50, 100, 200];
+
+/// **π_θ** — the learned policy (M5c, action space extended in M5d). For each
+/// observed agent it computes a feature vector `[1, suspected, budget_frac,
+/// own-node load, load imbalance, mean budget_frac, critical, candidate,
+/// observed_yield, candidate_age]` and scores {hold, heal, refill×3 grades,
+/// migrate, promote, rollback} linearly with θ, taking the best **legal**
+/// action. Legality is decided *before* scoring — the invariants are masks on
+/// the action space, not reward terms, so the optimizer cannot game them
+/// (RFC-0007 §4).
 ///
 /// It is a [`Policy`] like any other: it plugs into the same swap point as
 /// [`HeuristicPolicy`] and drives the same M1–M4 mechanisms — after, and only
@@ -477,31 +641,41 @@ const MIGRATE: usize = 3;
 pub struct LearnedPolicy {
     /// The learned parameters — everything [`train`] is allowed to change.
     pub theta: [f64; N_PARAMS],
-    /// Tokens per refill actuation (≤ [`MAX_GRANT`]).
-    pub refill_tokens: u64,
 }
 
 impl LearnedPolicy {
     /// θ initialized to *behavior-clone the M5a heuristic* (heal when suspected,
-    /// refill under a 0.2 budget floor, migrate off a hot node). Training starts
-    /// from the baseline's behavior and earns its improvements — it does not
-    /// have to rediscover "heal the fallen" from random noise.
+    /// refill 100 under a 0.2 budget floor, migrate off a hot node) plus a
+    /// readable starting verdict rule for updates (promote a candidate whose
+    /// observed yield runs high, roll back one running low, after some
+    /// evidence). Training starts from the baseline's behavior and earns its
+    /// improvements — it does not have to rediscover "heal the fallen" from
+    /// random noise.
     pub fn baseline_init() -> Self {
         let mut theta = [0.0; N_PARAMS];
         // heal: positive iff suspected.
         theta[HEAL * N_FEATURES] = -5.0;
         theta[HEAL * N_FEATURES + 1] = 10.0;
-        // refill: positive iff budget_frac < 0.2 — and decisively when critical.
-        theta[REFILL * N_FEATURES] = 2.0;
-        theta[REFILL * N_FEATURES + 2] = -10.0;
-        theta[REFILL * N_FEATURES + 6] = 5.0;
+        // refill (all grades): positive iff budget_frac < 0.2 — decisively when
+        // critical. The mid grade starts slightly preferred (the M5c behavior);
+        // training learns when a smaller or larger grant pays.
+        for (i, grade) in [REFILL_S, REFILL_M, REFILL_L].into_iter().enumerate() {
+            theta[grade * N_FEATURES] = if i == 1 { 2.0 } else { 1.5 };
+            theta[grade * N_FEATURES + 2] = -10.0;
+            theta[grade * N_FEATURES + 6] = 5.0;
+        }
         // migrate: positive iff own-node load ≥ 4.
         theta[MIGRATE * N_FEATURES] = -3.5;
         theta[MIGRATE * N_FEATURES + 3] = 1.0;
-        Self {
-            theta,
-            refill_tokens: 100,
-        }
+        // promote: observed yield high + evidence accumulated.
+        theta[PROMOTE * N_FEATURES] = -4.0;
+        theta[PROMOTE * N_FEATURES + 8] = 3.0;
+        theta[PROMOTE * N_FEATURES + 9] = 0.5;
+        // rollback: observed yield low + evidence accumulated.
+        theta[ROLLBACK * N_FEATURES] = 2.0;
+        theta[ROLLBACK * N_FEATURES + 8] = -4.0;
+        theta[ROLLBACK * N_FEATURES + 9] = 0.5;
+        Self { theta }
     }
 
     fn score(&self, action: usize, features: &[f64; N_FEATURES]) -> f64 {
@@ -540,6 +714,9 @@ impl Policy for LearnedPolicy {
                 } else {
                     0.0
                 },
+                if a.candidate { 1.0 } else { 0.0 },
+                a.observed_yield,
+                a.candidate_age.min(10.0),
             ];
             let suspected = a.health == Health::Suspected;
             let lightest_other = state
@@ -552,8 +729,12 @@ impl Policy for LearnedPolicy {
             // scored at all.
             let legal = [
                 (HEAL, suspected),
-                (REFILL, !suspected),
+                (REFILL_S, !suspected),
+                (REFILL_M, !suspected),
+                (REFILL_L, !suspected),
                 (MIGRATE, !suspected && lightest_other.is_some()),
+                (PROMOTE, !suspected && a.candidate),
+                (ROLLBACK, !suspected && a.candidate),
             ];
             let mut action = HOLD;
             let mut best = self.score(HOLD, &features);
@@ -577,9 +758,9 @@ impl Policy for LearnedPolicy {
                         });
                     }
                 }
-                REFILL => out.push(Decision::Refill {
+                REFILL_S | REFILL_M | REFILL_L => out.push(Decision::Refill {
                     agent: a.id.clone(),
-                    tokens: self.refill_tokens,
+                    tokens: GRANTS[action - REFILL_S],
                 }),
                 MIGRATE => {
                     if let Some(to) = lightest_other {
@@ -590,6 +771,12 @@ impl Policy for LearnedPolicy {
                         });
                     }
                 }
+                PROMOTE => out.push(Decision::Promote {
+                    agent: a.id.clone(),
+                }),
+                ROLLBACK => out.push(Decision::Rollback {
+                    agent: a.id.clone(),
+                }),
                 _ => {} // hold
             }
         }
@@ -789,7 +976,7 @@ impl Ramp {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{Arc, OnceLock};
 
     use thaliox_cognition::MockProvider;
     use thaliox_core::AttentionBudget;
@@ -799,6 +986,13 @@ mod tests {
     use crate::{Action, Agent, DeployEnv, Governor, Node, Supervisor};
 
     use super::*;
+
+    /// One shared training run for the whole suite — training is deterministic,
+    /// so every test judges the same π_θ.
+    fn trained() -> &'static LearnedPolicy {
+        static TRAINED: OnceLock<LearnedPolicy> = OnceLock::new();
+        TRAINED.get_or_init(|| train(&training_suite(), 400, 7))
+    }
 
     /// A policy that never lifts a finger — the survival floor's natural prey.
     struct Idle;
@@ -812,14 +1006,15 @@ mod tests {
     }
 
     /// A policy that proposes only illegal actions: heal the healthy, grant
-    /// beyond the INV-1 bound. The masks must stop every one of them.
+    /// beyond the INV-1 bound, conclude updates that were never staged. The
+    /// masks must stop every one of them.
     struct Rogue;
     impl Policy for Rogue {
         fn decide(&self, state: &ClusterState) -> Vec<Decision> {
             state
                 .agents
                 .iter()
-                .filter(|a| a.health == Health::Healthy)
+                .filter(|a| a.health == Health::Healthy && !a.candidate)
                 .flat_map(|a| {
                     [
                         Decision::Heal {
@@ -829,6 +1024,12 @@ mod tests {
                         Decision::Refill {
                             agent: a.id.clone(),
                             tokens: 1_000_000,
+                        },
+                        Decision::Promote {
+                            agent: a.id.clone(),
+                        },
+                        Decision::Rollback {
+                            agent: a.id.clone(),
                         },
                     ]
                 })
@@ -844,8 +1045,9 @@ mod tests {
         let s = scenario("det", 99, 3, 6, 0.05, false);
         let a = simulate(&s, &HeuristicPolicy::default());
         let b = simulate(&s, &HeuristicPolicy::default());
-        assert_eq!(a.work_done, b.work_done);
+        assert_eq!(a.work_done.to_bits(), b.work_done.to_bits());
         assert_eq!(a.granted, b.granted);
+        assert_eq!(a.overhead, b.overhead);
         assert_eq!(a.violations, b.violations);
         assert_eq!(a.survived, b.survived);
         assert_eq!(a.efficiency.to_bits(), b.efficiency.to_bits());
@@ -858,6 +1060,8 @@ mod tests {
         let o = simulate(&s, &Rogue);
         assert!(o.violations > 0);
         assert_eq!(o.granted, 0); // the 1M-token grant never landed (INV-1 mask)
+        assert_eq!(o.overhead, 0); // nothing applied ⇒ nothing metered
+        assert_eq!(o.promoted + o.rolled_back, 0); // no phantom update verdicts
         assert!(approx_eq(reward(&o), 0.0)); // violations zero the reward outright
     }
 
@@ -889,8 +1093,8 @@ mod tests {
     /// survival — the falsification gate of RFC-0007 §4, running in CI.
     #[test]
     fn e5_trained_policy_beats_the_baseline_on_held_out() {
-        let pi = train(&training_suite(), 300, 7);
-        let gate = e5(&pi);
+        let pi = trained();
+        let gate = e5(pi);
         assert!(
             gate.passed,
             "π_θ must dominate the baseline: candidate {:?} vs baseline {:?}",
@@ -963,7 +1167,7 @@ mod tests {
     /// healing a genuinely suspected agent in a live cluster.
     #[tokio::test]
     async fn learned_policy_drives_the_real_control_plane() {
-        let pi = train(&training_suite(), 50, 7);
+        let pi = trained().clone();
 
         let mut a = live_agent("a1", 100);
         a.act(Action::Think {
@@ -996,7 +1200,7 @@ mod tests {
     /// `Shadow` — every rung set by [`Governor::set_mode`], no human anywhere.
     #[test]
     fn ramp_promotes_in_system_and_demotes_on_regression() {
-        let pi = train(&training_suite(), 300, 7);
+        let pi = trained().clone();
         let ramp = Ramp::default();
         let mut gov = Governor::new(
             live_agent("gov", 1000),
@@ -1018,6 +1222,73 @@ mod tests {
         assert!(!regression.passed);
         gov.set_mode(ramp.next(gov.mode(), regression.passed));
         assert_eq!(gov.mode(), Mode::Shadow);
+    }
+
+    // ─────────────────────────── M5d: self-optimization ──────────────────────
+
+    /// Every applied actuation is metered (INV-1): the overhead lands in the
+    /// efficiency denominator — what makes "how big a grant" a real trade-off.
+    #[test]
+    fn actuation_overhead_is_metered() {
+        let s = scenario("busy", 13, 3, 6, 0.0, true); // packed ⇒ heals/migrations/refills
+        let o = simulate(&s, &HeuristicPolicy::default());
+        assert!(o.overhead > 0);
+        assert_eq!(o.overhead % CONTROL_OVERHEAD, 0);
+    }
+
+    /// The grant size is a policy *output* (the learned adaptive-compute knob):
+    /// with the large-grant action scored highest, π_θ emits a 200-token refill
+    /// through the same `Decision::Refill` the mechanism already actuates.
+    #[test]
+    fn graded_refill_is_a_policy_output() {
+        let mut pi = LearnedPolicy {
+            theta: [0.0; N_PARAMS],
+        };
+        pi.theta[REFILL_L * N_FEATURES] = 1.0; // large grant beats hold everywhere
+        let state = ClusterState {
+            agents: vec![AgentObs {
+                id: AgentId::new("a1"),
+                node: NodeId::new("A"),
+                health: Health::Healthy,
+                budget_remaining: 2,
+                budget_total: 100,
+                candidate: false,
+                observed_yield: 1.0,
+                candidate_age: 0.0,
+            }],
+            nodes: vec![NodeObs {
+                id: NodeId::new("A"),
+                load: 1,
+            }],
+        };
+        let decisions = pi.decide(&state);
+        assert_eq!(
+            decisions,
+            vec![Decision::Refill {
+                agent: AgentId::new("a1"),
+                tokens: 200,
+            }]
+        );
+    }
+
+    /// The learned self-update verdict: on a held-out update scenario the
+    /// trained π_θ concludes candidates (promotes the good, rolls back the
+    /// regressed) from observed yield alone — and out-earns the baseline, which
+    /// has no verdict and leaves every candidate dangling.
+    #[test]
+    fn learned_update_verdicts_beat_dangling_candidates() {
+        let s = held_out_suite()
+            .into_iter()
+            .find(|s| s.update_at.is_some())
+            .expect("held-out suite carries an update scenario");
+        let ours = simulate(&s, trained());
+        let base = simulate(&s, &HeuristicPolicy::default());
+
+        assert!(ours.survived);
+        assert_eq!(ours.violations, 0);
+        assert!(ours.promoted + ours.rolled_back > 0); // verdicts actually happen
+        assert_eq!(base.promoted + base.rolled_back, 0); // the baseline has none
+        assert!(ours.efficiency > base.efficiency); // and the verdicts pay
     }
 
     fn approx_eq(a: f64, b: f64) -> bool {

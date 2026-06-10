@@ -16,21 +16,28 @@
 //! Each [`tick`](ControlPlane::tick) yields a [`StepReport`] — the governor's own
 //! audit trail (INV-4), and the ledger a future learned policy trains on.
 
+use std::collections::HashMap;
+
 use thaliox_core::{AgentId, AuditRecord, Permission, ResourceKind};
 
+use crate::update::CheckpointHistory;
 use crate::{Action, Agent, DeployEnv, Health, Node, NodeId, Supervisor};
 
 /// A bag of [`Node`]s the control plane actuates over. It owns the nodes so it can
 /// hand the right `&mut Node`(s) to the runtime mechanisms (`self_heal`,
-/// `migrate`) without the caller juggling disjoint borrows.
+/// `migrate`) without the caller juggling disjoint borrows. It also keeps each
+/// agent's generational [`CheckpointHistory`] (M2 `update.rs`), so self-update
+/// verdicts ([`Decision::Promote`] / [`Decision::Rollback`], M5d) actuate through
+/// the same mechanism path as everything else.
 #[derive(Default)]
 pub struct Cluster {
     nodes: Vec<Node>,
+    histories: HashMap<AgentId, CheckpointHistory>,
 }
 
 impl Cluster {
     pub fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self::default()
     }
 
     /// Builder-style: add a node and return self.
@@ -96,6 +103,42 @@ impl Cluster {
             }
         }
     }
+
+    fn checkpoint_of(&self, agent: &AgentId) -> Result<crate::Checkpoint, String> {
+        self.nodes
+            .iter()
+            .find_map(|n| n.agent(agent))
+            .map(|a| a.checkpoint())
+            .ok_or_else(|| format!("agent {agent} not hosted"))
+    }
+
+    /// Start tracking `agent`'s self-update generations, taking its **current**
+    /// state as the known-good baseline (generation 0).
+    pub fn track(&mut self, agent: &AgentId) -> Result<(), String> {
+        let cp = self.checkpoint_of(agent)?;
+        self.histories
+            .entry(agent.clone())
+            .or_insert_with(|| CheckpointHistory::init(cp));
+        Ok(())
+    }
+
+    /// Stage the agent's current (post-update) state as an unproven **candidate**
+    /// generation. The verdict — keep it or restore the baseline — is the control
+    /// plane's [`Decision::Promote`] / [`Decision::Rollback`]: exactly the
+    /// "what counts as healthy" call `update.rs` left to its caller, learned in
+    /// M5d over observed post-update reward.
+    pub fn stage_update(&mut self, agent: &AgentId) -> Result<u64, String> {
+        let cp = self.checkpoint_of(agent)?;
+        self.histories
+            .get_mut(agent)
+            .ok_or_else(|| format!("agent {agent} not tracked (call track first)"))
+            .map(|h| h.stage(cp))
+    }
+
+    /// The agent's self-update history, if tracked.
+    pub fn history(&self, agent: &AgentId) -> Option<&CheckpointHistory> {
+        self.histories.get(agent)
+    }
 }
 
 /// One agent as the control plane sees it.
@@ -106,6 +149,16 @@ pub struct AgentObs {
     pub health: Health,
     pub budget_remaining: u64,
     pub budget_total: u64,
+    /// A staged self-update candidate awaits a promote-or-rollback verdict (M5d).
+    pub candidate: bool,
+    /// Work delivered per token, relative to the committed baseline — the
+    /// **observed post-update reward** an update verdict is learned over
+    /// (1.0 = baseline; supplied by throughput telemetry, or the simulator
+    /// during training).
+    pub observed_yield: f64,
+    /// Ticks since the candidate was staged (0.0 when none) — how long the
+    /// verdict has been gathering evidence.
+    pub candidate_age: f64,
 }
 
 impl AgentObs {
@@ -218,8 +271,18 @@ pub enum Decision {
         to: NodeId,
     },
     /// Top up a starved-but-healthy agent's attention budget
-    /// (actuated by [`Agent::grant_budget`]).
+    /// (actuated by [`Agent::grant_budget`]). The grant size is itself a policy
+    /// output — M5d's learned adaptive-compute knob (RFC-0002 / RFC-0007 §5).
     Refill { agent: AgentId, tokens: u64 },
+    /// Commit the agent's staged self-update candidate as the new known-good
+    /// baseline (actuated by [`CheckpointHistory::promote`]) — the "healthy"
+    /// verdict `update.rs` left to its caller, decided in M5d over observed
+    /// post-update reward.
+    Promote { agent: AgentId },
+    /// Discard the staged candidate and restore the agent from its last
+    /// committed generation (actuated by [`CheckpointHistory::rollback`] +
+    /// [`Agent::restore`]) — the update regressed.
+    Rollback { agent: AgentId },
 }
 
 impl Decision {
@@ -229,7 +292,9 @@ impl Decision {
         match self {
             Decision::Heal { agent, .. }
             | Decision::Migrate { agent, .. }
-            | Decision::Refill { agent, .. } => agent,
+            | Decision::Refill { agent, .. }
+            | Decision::Promote { agent }
+            | Decision::Rollback { agent } => agent,
         }
     }
 }
@@ -406,12 +471,20 @@ impl ControlPlane {
                 let id = a.id().clone();
                 let health = supervisor.health(&id).unwrap_or(Health::Healthy);
                 let b = a.budget();
+                let candidate = cluster
+                    .history(&id)
+                    .is_some_and(CheckpointHistory::has_candidate);
                 agents.push(AgentObs {
                     id,
                     node: node.id().clone(),
                     health,
                     budget_remaining: b.remaining(),
                     budget_total: b.total,
+                    candidate,
+                    // Live throughput telemetry arrives with the fabric's yield
+                    // reporting; until then the baseline is assumed.
+                    observed_yield: 1.0,
+                    candidate_age: 0.0,
                 });
             }
         }
@@ -485,6 +558,41 @@ fn actuate(
                 .and_then(|n| n.agent_mut(agent))
                 .expect("located above")
                 .grant_budget(*tokens);
+            Ok(())
+        }
+        Decision::Promote { agent } => cluster
+            .histories
+            .get_mut(agent)
+            .ok_or_else(|| format!("agent {agent} not tracked"))?
+            .promote()
+            .map(|_| ())
+            .map_err(|e| e.to_string()),
+        Decision::Rollback { agent } => {
+            let node_id = cluster
+                .nodes()
+                .iter()
+                .find(|n| n.hosts(agent))
+                .map(|n| n.id().clone())
+                .ok_or_else(|| format!("agent {agent} not hosted"))?;
+            let last_good = {
+                let h = cluster
+                    .histories
+                    .get_mut(agent)
+                    .ok_or_else(|| format!("agent {agent} not tracked"))?;
+                if !h.has_candidate() {
+                    return Err(format!("no candidate staged for {agent}"));
+                }
+                h.rollback();
+                h.last_good().clone()
+            };
+            let e = env();
+            let restored =
+                Agent::restore(&last_good, e.memory, e.mind).map_err(|err| err.to_string())?;
+            let slot = cluster
+                .node_mut(&node_id)
+                .and_then(|n| n.agent_mut(agent))
+                .expect("located above");
+            *slot = restored;
             Ok(())
         }
     }
@@ -855,6 +963,9 @@ mod tests {
                     health: Health::Healthy,
                     budget_remaining: 50,
                     budget_total: 100,
+                    candidate: false,
+                    observed_yield: 1.0,
+                    candidate_age: 0.0,
                 })
                 .collect(),
             nodes: (0..10)
@@ -911,6 +1022,85 @@ mod tests {
         // Not healed — the mechanism only runs when the policy says so.
         assert!(cluster.node(&NodeId::new("A")).unwrap().hosts(&id));
         assert!(cluster.node(&NodeId::new("B")).unwrap().is_empty());
+    }
+
+    /// M5d mechanism path: a staged self-update candidate is concluded by the
+    /// control plane — `Promote` commits it; `Rollback` discards it and restores
+    /// the agent from the last committed generation. Same swap point, same
+    /// actuation pipeline, real `update.rs` underneath.
+    struct Verdict(Decision);
+    impl Policy for Verdict {
+        fn decide(&self, _: &ClusterState) -> Vec<Decision> {
+            vec![self.0.clone()]
+        }
+        fn name(&self) -> &str {
+            "verdict"
+        }
+    }
+
+    #[tokio::test]
+    async fn update_verdicts_actuate_through_the_real_mechanism() {
+        let a = live_agent("a1", 100);
+        let id = a.id().clone();
+        let mut node = Node::new("A");
+        node.host(a);
+        let mut cluster = Cluster::new().with_node(node);
+        let mut sup = Supervisor::new(2);
+
+        // Track the known-good baseline (budget 100), then "apply an update"
+        // (metered work — budget drops to 95) and stage it as a candidate.
+        cluster.track(&id).unwrap();
+        cluster
+            .node_mut(&NodeId::new("A"))
+            .unwrap()
+            .agent_mut(&id)
+            .unwrap()
+            .act(Action::Think {
+                prompt: "v2".into(),
+                cost: 5,
+            })
+            .await
+            .unwrap();
+        cluster.stage_update(&id).unwrap();
+        assert!(cluster.history(&id).unwrap().has_candidate());
+
+        // The staged candidate is visible to the policy (AgentObs.candidate).
+        let state = ControlPlane::observe(&cluster, &sup);
+        assert!(state.agents[0].candidate);
+
+        // Verdict: the update regressed → Rollback restores the baseline.
+        let mut cp = ControlPlane::new(Box::new(Verdict(Decision::Rollback { agent: id.clone() })));
+        let report = cp.tick(&mut cluster, &mut sup, &fresh_env);
+        assert_eq!(report.applied(), 1);
+        let h = cluster.history(&id).unwrap();
+        assert!(!h.has_candidate());
+        assert_eq!(h.current_gen(), 0);
+        let restored = cluster.node(&NodeId::new("A")).unwrap().agent(&id).unwrap();
+        assert_eq!(restored.remaining_budget(), 100); // pre-update state is back
+
+        // Second round: stage again and this time commit it as the new baseline.
+        cluster
+            .node_mut(&NodeId::new("A"))
+            .unwrap()
+            .agent_mut(&id)
+            .unwrap()
+            .act(Action::Think {
+                prompt: "v3".into(),
+                cost: 5,
+            })
+            .await
+            .unwrap();
+        cluster.stage_update(&id).unwrap();
+        let mut cp = ControlPlane::new(Box::new(Verdict(Decision::Promote { agent: id.clone() })));
+        let report = cp.tick(&mut cluster, &mut sup, &fresh_env);
+        assert_eq!(report.applied(), 1);
+        let h = cluster.history(&id).unwrap();
+        assert!(!h.has_candidate());
+        assert_eq!(h.current_gen(), 2); // gen2 committed (gen1 was rolled back)
+        // A rollback verdict with nothing staged is refused by the mechanism.
+        let mut cp = ControlPlane::new(Box::new(Verdict(Decision::Rollback { agent: id.clone() })));
+        let report = cp.tick(&mut cluster, &mut sup, &fresh_env);
+        assert_eq!(report.applied(), 0);
     }
 
     // ───────────────────────────── M5b: the governor ─────────────────────────

@@ -42,19 +42,21 @@ Five invariants constrain any implementation: **INV-1 budget conservation · INV
 | `thaliox-cap` | — | capability token issuing / verification (canonical **length-prefixed** signature, scope enforcement) |
 | `thaliox-api` | L5 | unified API gateway (axum) + multi-language SDK entry |
 
-## Status: ✅ M4 cluster + multi-platform shipped (2026-06-08, `v0.4.0`)
+## Status: ✅ M5 learned control plane shipped (2026-06-10, `v0.5.0`)
 
-THALIOX is now **an operating system for a distributed society of agents**. The H1
-software arc through M4 is complete — each milestone independently valuable:
+THALIOX is now **an operating system for a distributed society of agents that
+manages itself with a learned, falsifiable, fully in-system control plane**. The
+H1 software arc through M5 is complete — each milestone independently valuable:
 
 - **M1 single-node MVP** (`v0.1.0`) — a single agent that, under the five TAM invariants, completes a task autonomously: unified `LlmProvider` cognition, `SemanticSpace` vector memory, autonomous tool-calling loop, attention-budget conservation (INV-1), capability gating (INV-2) + audit (INV-4), and an axum HTTP gateway. See [docs/M1-MILESTONE.md](docs/M1-MILESTONE.md).
 - **M2 microVM-ization** — one-command deploy + snapshot/restore + self-update rollback; the agent runs **inside a real Firecracker microVM** (vsock deploy, VM snapshot/restore), validated on KVM bare-metal. [RFC-0004](docs/rfcs/0004-firecracker-deploy.md).
 - **M3 multi-instance HA** — per-field CRDT merge, `Node` + `migrate`, and a `Supervisor` (heartbeat → self-heal → reconcile). [RFC-0005](docs/rfcs/0005-multi-instance-ha.md).
 - **M4 cluster + multi-platform** — a `fabric` that carries `VectorMessage`s between agents and across nodes; **cross-host live migration validated on two KVM machines** at both process- and microVM-level (the full {VM, host-process} migration matrix); **teams** in four paradigms (Pipeline / Hierarchy / Market / Swarm); and the `api` gateway generalized into the **cluster's front door** (capability admission, SSE streaming, peer routing). [RFC-0006](docs/rfcs/0006-cluster-multiplatform.md).
+- **M5 learned control plane** — "AI manages AI", literally: see the roadmap section below. [RFC-0007](docs/rfcs/0007-learned-control-plane.md).
 
 INV-2 and INV-3 are enforced *between* agents and at the cluster door, not just inside one agent — the team/cluster boundary is not a hole in the invariants.
 
-All four gates green: `fmt` · `clippy -D warnings` · `test` (123) · `doc -D warnings`.
+All four gates green: `fmt` · `clippy -D warnings` · `test` (127) · `doc -D warnings`.
 
 ### Quickstart
 
@@ -72,9 +74,9 @@ cargo run -p thaliox-api      --example gateway        # HTTP gateway on :8088
 
 ## Roadmap
 
-H1 software (on Linux) → H2 specialization (push down the stack) → H3 co-designed silicon. M1–M4 are
-shipped, and **M5 learned control plane** ("AI manages AI", [RFC-0007](docs/rfcs/0007-learned-control-plane.md))
-is underway: **M5a** (`runtime::control`) ships the closed loop — observe the cluster as a fixed-width
+H1 software (on Linux) → H2 specialization (push down the stack) → H3 co-designed silicon. M1–M5 are
+shipped — **M5 learned control plane** ("AI manages AI", [RFC-0007](docs/rfcs/0007-learned-control-plane.md))
+in four stages: **M5a** (`runtime::control`) ships the closed loop — observe the cluster as a fixed-width
 state vector → a swappable `Policy` (heuristic baseline) → actuate only through M1–M4's invariant-guarded
 mechanisms; **M5b** makes the governor itself a first-class agent — it thinks (spends budget, INV-1),
 acts under capability (INV-2), is audited (INV-4), with Shadow/Canary/Act modes gated in-system, no human
@@ -83,8 +85,11 @@ deterministic cluster simulator seeded from replayed audit traces (the INV-4 led
 invariants as action-space **masks** (never reward terms), reward = budget-efficiency under a hard
 survival floor — gated by **E5 in CI**: π_θ strictly beat the heuristic baseline on a held-out suite
 (zero violations, full survival) before being promoted Shadow → Canary → Act, auto-demoted on any
-regression, no human on any rung. Next: M5d (self-optimization). Full roadmap in
-[docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
+regression, no human on any rung; **M5d** closes the loop on the agent itself — the refill becomes a
+**learned, graded adaptive-compute knob** (priced by per-actuation overhead; the first concrete F10
+step), and the **self-update verdict** (promote or roll back a staged candidate generation, real
+`update.rs` mechanism underneath) is decided from observed post-update yield, not a hand-set threshold.
+Next: M6 (H2 — push the stack down). Full roadmap in [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
 
 ## Contributing
 
