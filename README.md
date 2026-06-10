@@ -54,7 +54,7 @@ software arc through M4 is complete — each milestone independently valuable:
 
 INV-2 and INV-3 are enforced *between* agents and at the cluster door, not just inside one agent — the team/cluster boundary is not a hole in the invariants.
 
-All four gates green: `fmt` · `clippy -D warnings` · `test` (114) · `doc -D warnings`.
+All four gates green: `fmt` · `clippy -D warnings` · `test` (123) · `doc -D warnings`.
 
 ### Quickstart
 
@@ -78,7 +78,12 @@ is underway: **M5a** (`runtime::control`) ships the closed loop — observe the 
 state vector → a swappable `Policy` (heuristic baseline) → actuate only through M1–M4's invariant-guarded
 mechanisms; **M5b** makes the governor itself a first-class agent — it thinks (spends budget, INV-1),
 acts under capability (INV-2), is audited (INV-4), with Shadow/Canary/Act modes gated in-system, no human
-(INV-5). Next: M5c (the learned policy + its falsification gate). Full roadmap in
+(INV-5); **M5c** (`runtime::learn`) fills the swap point with a **learned** policy π_θ — trained in a
+deterministic cluster simulator seeded from replayed audit traces (the INV-4 ledger is the dataset),
+invariants as action-space **masks** (never reward terms), reward = budget-efficiency under a hard
+survival floor — gated by **E5 in CI**: π_θ strictly beat the heuristic baseline on a held-out suite
+(zero violations, full survival) before being promoted Shadow → Canary → Act, auto-demoted on any
+regression, no human on any rung. Next: M5d (self-optimization). Full roadmap in
 [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
 
 ## Contributing

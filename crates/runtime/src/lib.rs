@@ -23,6 +23,9 @@ pub mod experiment;
 /// M2/F3 Firecracker microVM launch target (RFC-0004). Feature-gated.
 #[cfg(feature = "firecracker")]
 pub mod firecracker;
+/// M5c — the learned policy π_θ, its training simulator, and the falsification
+/// gate E5 (RFC-0007 §4): learning gated by strict dominance over the baseline.
+pub mod learn;
 /// M2 packaging & one-click deployment (software target; Firecracker later).
 pub mod package;
 /// M3 supervisor — health & self-healing takeover (RFC-0005 §5).
@@ -40,6 +43,10 @@ pub use control::{
 };
 #[cfg(feature = "firecracker")]
 pub use firecracker::{FcError, FirecrackerConfig, FirecrackerDeploy, MicroVm};
+pub use learn::{
+    EvalReport, GateReport, LearnedPolicy, Ramp, Scenario, SimOutcome, e5, evaluate,
+    falsification_gate, held_out_suite, reward, simulate, train, training_suite,
+};
 pub use package::{DeployEnv, DeployTarget, LocalDeploy, Manifest, Package, PackageError};
 pub use supervisor::{HealError, Health, Supervisor};
 pub use update::{
