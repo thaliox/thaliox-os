@@ -9,7 +9,7 @@ use crate::capability::Permission;
 
 /// The operation set. `Think` (internal cognition) is budget-only; the rest are
 /// side-effecting and capability-gated (TAM §7).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Operation {
     /// Internal cognition (inference). Costs budget, needs no capability.
     Think,

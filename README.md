@@ -41,6 +41,7 @@ Five invariants constrain any implementation: **INV-1 budget conservation · INV
 | `thaliox-fabric` | L3 | agent↔agent vector transport, team orchestration, CRDT state replication (from M4) |
 | `thaliox-cap` | — | capability token issuing / verification (canonical **length-prefixed** signature, scope enforcement) |
 | `thaliox-api` | L5 | unified API gateway (axum) + multi-language SDK entry |
+| `thaliox-substrate` | L0 | substrate ledger (TAM-op cost attribution), E6 meter gate, INV-2 → seccomp deny-floor compiler (M6a) |
 
 ## Status: ✅ M5 learned control plane shipped (2026-06-10, `v0.5.0`)
 
@@ -56,7 +57,7 @@ H1 software arc through M5 is complete — each milestone independently valuable
 
 INV-2 and INV-3 are enforced *between* agents and at the cluster door, not just inside one agent — the team/cluster boundary is not a hole in the invariants.
 
-All four gates green: `fmt` · `clippy -D warnings` · `test` (127) · `doc -D warnings`.
+All four gates green: `fmt` · `clippy -D warnings` · `test` (147) · `doc -D warnings`.
 
 ### Quickstart
 
