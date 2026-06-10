@@ -89,7 +89,11 @@ regression, no human on any rung; **M5d** closes the loop on the agent itself �
 **learned, graded adaptive-compute knob** (priced by per-actuation overhead; the first concrete F10
 step), and the **self-update verdict** (promote or roll back a staged candidate generation, real
 `update.rs` mechanism underneath) is decided from observed post-update yield, not a hand-set threshold.
-Next: M6 (H2 — push the stack down). Full roadmap in [docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
+Next: **M6** (H2 — push the stack down; design drafted in
+[RFC-0008](docs/rfcs/0008-push-the-stack-down.md): meter the substrate tax with eBPF, shrink the guest
+to the TAM contract, take the kernel out of the vector path, put the first TAM primitive on an FPGA —
+every stage behind a falsification gate, and any round Linux wins, Linux keeps). Full roadmap in
+[docs/MASTER_PLAN.md](docs/MASTER_PLAN.md).
 
 ## Contributing
 
