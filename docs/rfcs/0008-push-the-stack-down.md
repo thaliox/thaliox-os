@@ -172,6 +172,35 @@ treatment a serious network OS gives packets:
 - **Rung 3 — AF_XDP (stretch)**: the host fabric daemon owns the NIC queue and
   the kernel network stack leaves the path entirely. Only attempted if rung 2's
   metered ceiling justifies it.
+- **Rung 4 — memory-semantic fabric (CXL, horizon)**: on hosts joined by a
+  CXL 3.0+ shared-memory window, the *same ring as rung 1* is established over
+  a cross-host mapped region — a `VectorMessage` hop becomes cache-coherent
+  load/store at a few hundred nanoseconds, and the NIC leaves the path the way
+  the kernel left it in rung 3. The industry is converging on exactly this
+  substrate (the interconnect standards war ended with CXL absorbing Gen-Z /
+  OpenCAPI / CCIX; CXL 4.0 targets multi-rack coherent pools), which means H2
+  may get "the network dissolves into the memory hierarchy" as a commodity
+  floor rather than a bespoke one. This rung is **horizon-tracked, not gated
+  in M6**: multi-host CXL sharing reaches commodity availability ~2026-2027,
+  and no hardware is rented or bought for it before the curve justifies the
+  spend (§9).
+
+Rung 4 is why rung 1 carries a hard constraint, binding now: **the ring is
+defined over *any* mapped memory window — never over same-host shm
+specifically**. Establishment is a capability-gated mapping (INV-2), fidelity
+guards sit at the ring edges (INV-3), and nothing in the ring protocol may
+assume which medium backs the mapping. "Same ring code, different window" is
+the acceptance test that keeps rung 4 reachable without a rewrite.
+
+Until real CXL hardware exists, a **functional probe** keeps that claim honest
+and CI-able: QEMU emulates a CXL Type-3 memory device (Linux `dax`/`kmem`
+surfaces it as a memory-only NUMA node), the rung-1 ring runs over that window,
+and the fabric conformance suite must stay green; the substrate ledger gains a
+memory-tier column so that, when real tiers arrive (CXL memory runs 2-5×
+slower than local DRAM), M5's placement policy sees tier cost the same way it
+sees every other substrate cost. Emulation yields **functional evidence only**
+— no efficiency verdict is ever drawn from emulated latency, the same honesty
+rule E6 applies to captures (*no verdict until live*).
 
 Invariants are not relaxed: INV-2 admission and INV-3 fidelity guards stay at
 the fabric door exactly as RFC-0006 placed them — the rungs change *who moves
@@ -204,7 +233,7 @@ two milestones before silicon.
 |---|---|---|---|
 | **M6a** 🟡 | the **substrate ledger** (eBPF attribution of syscalls / crossings / copies to TAM ops, joined to the INV-4 audit) + **INV-2 compiled to seccomp/LSM-eBPF** per-agent deny floors — **CI leg shipped** (`thaliox-substrate`): `SubstrateLedger` joins probe samples to the INV-4 audit stream by (agent, op, time-window) with unattributed samples counted, never dropped; per-op `Baseline`s with the E6 reproducibility measure; the `Probe` contract + `ReplayProbe` (JSONL captures, the CI-side probe; live eBPF probe lands behind the `ebpf` feature on the box); the **E6 harness** (`experiment::e6` — overhead + reproducibility, no verdict until live captures exist); and the **deny-floor compiler** (`compile_deny_floor`: capability scope → coarse `SyscallGroup` warrants → deny-only OCI seccomp profile; monotone — more capability never means more denial; the Ptrace/ModuleLoad/MountNs tail warranted by nothing short of Admin). *Live leg pending bare-metal.* | **E6**: the meter itself costs < 3% throughput at full attribution, and per-op substrate baselines are reproducible across runs (< 10% variance) — *no later gate exists until this one passes, because every later gate divides by these numbers* | bare-metal KVM host (probes need a real kernel); logic + policy-compiler unit tests in CI |
 | **M6b** | the **contract guest**: `guest-runner` as PID 1, pruned kernel, vsock-only, vmproto conformance unchanged | **E7**: ≥ 3× faster cold-boot-to-ready, ≤ ½ idle RSS, and a strictly smaller measured syscall surface vs the M2 guest — same conformance suite green | bare-metal KVM host; image build + conformance suite scripted, CI-runnable on any KVM runner |
-| **M6c** | **vector data plane**: same-host shm ring → io_uring batched cross-host (→ AF_XDP stretch), behind the existing fabric interface | **E8**: ≥ 2× messages/sec/core *or* ≤ ½ p99 vs the M4 TCP baseline on identical hardware, with INV-2/INV-3 enforcement intact at the door (zero admission regressions in the conformance suite) | rung 1 partially CI-able (shm, single host); rungs 2–3 bare-metal |
+| **M6c** | **vector data plane**: same-host shm ring → io_uring batched cross-host (→ AF_XDP stretch), behind the existing fabric interface; the ring contract is **medium-agnostic** (§5), proven by the emulated-CXL functional probe (rung 4 is horizon-tracked — functional evidence only, no efficiency verdict) | **E8**: ≥ 2× messages/sec/core *or* ≤ ½ p99 vs the M4 TCP baseline on identical hardware, with INV-2/INV-3 enforcement intact at the door (zero admission regressions in the conformance suite) | rung 1 partially CI-able (shm, single host); rungs 2–3 bare-metal; rung 4 probe CI-able (QEMU CXL emulation) |
 | **M6d** | **FPGA capability-verify core** fed by the host fabric | **E9**: ≥ 10× verifications/sec/watt *or* tighter-than-CPU fixed latency (p99.9), bit-exact agreement with `thaliox-cap` on the E3 vector suite | FPGA dev board (hardware purchase) + host |
 
 Order matters: **M6a is first and non-negotiable** — it is the meter every
@@ -232,7 +261,8 @@ does not ship.
 | Mechanism/policy split (TAM §4.2) | substrate implementations are swappable policies; swaps won by falsification (E6–E9), Linux keeps any round it wins |
 | F10 (OS dissolves into the compiler) | M6b's pruned, statically-known guest is the first concrete deletion of dynamic-substrate generality |
 | F11 (abstract-machine contract first) | M6b ships a machine whose **entire OS interface is the TAM contract** (vmproto over vsock) |
-| M7/H3 (silicon) | M6d is the cheap rehearsal: one primitive, real gates, real watts |
+| M7/H3 (silicon) | M6d is the cheap rehearsal: one primitive, real gates, real watts — and rung 4 names the **capability memory controller** candidate's nearest concrete form: a CXL Type-3 device enforcing INV-2 *in the controller*, riding the commodity CXL fabric (and its PCIe physical layer) instead of a bespoke interconnect |
+| Migration / snapshot (RFC-0004/0006) | horizon note: on a pooled memory-semantic fabric, migrating an agent whose state lives in the pool degenerates from *copying state* to *remapping ownership* — the substrate-side path to MASTER_PLAN §5.2's "hardware-native snapshot/restore" |
 
 ---
 
@@ -248,7 +278,14 @@ does not ship.
   decision, not a control decision).
 - **FPGA dev board** (M6d): one mid-range board (e.g. Artix/ECP5-class is
   enough for an HMAC core); purchase deferred until E6/E7 are green so the
-  curve funds the board's claim.
+  curve funds the board's claim. If M6d results point at the capability memory
+  controller as the M7 primitive, a CXL-hard-IP board (Agilex-class) is the
+  natural *second* board — a later, separate spend decision, never a
+  prerequisite for E9.
+- **CXL (M6c rung 4)**: emulation only during M6 — QEMU's CXL Type-3 model
+  costs nothing and runs in CI; real multi-host CXL sharing is deferred until
+  commodity hardware exists (~2026-2027), and renting/buying it is, as always,
+  a spend decision the curve must justify first.
 
 ---
 
@@ -275,6 +312,14 @@ does not ship.
 6. **FPGA primitive choice** — capability-verify is the conservative pick; is
    VectorMessage switching (a tiny crossbar with admission) the bolder one that
    teaches more about M7's NoC, and can the board host both?
+7. **Revocation on a load/store medium** — on a socket, revoking admission
+   tears down a connection the kernel mediates; on a shared window (shm today,
+   CXL tomorrow) bytes move with no per-message doorman. Same-host, unmapping
+   is the host's privilege; cross-host CXL unmapping requires fabric-manager
+   cooperation. Does question 3's answer (revocable establishment) survive a
+   medium where no kernel sits between peers — or does rung 4 require a
+   hardware-assisted revocation primitive, which would itself be an M7-grade
+   argument for the capability memory controller?
 
 ---
 
